@@ -44,6 +44,18 @@ def test_snapshot_restore_continues_at_the_same_sequence_position() -> None:
     assert uninterrupted.snapshot() == restored.snapshot()
 
 
+def test_fork_is_independent_and_starts_at_the_same_sequence_position() -> None:
+    source = XorShift64StarRandom.from_seed(0xABCD)
+    fork = source.fork()
+    original_state = source.snapshot()
+
+    fork_value = fork.integer_inclusive(1, 100)
+
+    assert source.snapshot() == original_state
+    assert source.integer_inclusive(1, 100) == fork_value
+    assert source.snapshot() == fork.snapshot()
+
+
 @pytest.mark.parametrize("invalid_state", [0, -1, 1 << 64, True])
 def test_invalid_internal_state_is_rejected(invalid_state: int) -> None:
     with pytest.raises(ValueError, match="nonzero unsigned 64-bit"):

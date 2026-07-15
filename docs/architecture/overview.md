@@ -25,7 +25,7 @@ Browser frontend
   - local presentation state
 ```
 
-This is a target direction. P1 implements the engineering shell and connectivity smoke test. P2 adds the pure headless domain kernel. TASK-002 begins P3 with only versioned snapshot persistence and a recoverable deterministic random source; application services, replay, content, and gameplay layers remain deferred.
+This is a target direction. P1 implements the engineering shell and connectivity smoke test. P2 adds the pure headless domain kernel. TASK-002 begins P3 with versioned snapshot persistence and a recoverable deterministic random source. TASK-003 adds only the headless persistent-session commit boundary; HTTP integration, replay, content, and gameplay remain deferred.
 
 ## Authority boundary
 
@@ -90,6 +90,36 @@ The `buxianxian-save` v1 snapshot contains a complete authoritative `GameState` 
 identified and versioned random state. Loading dispatches on the save schema version. Events are not
 persisted or replayed. See `ADR-004-versioned-snapshot-save-and-xorshift64star.md` for the format,
 compatibility, and atomic-write decisions.
+
+## Current application commit boundary
+
+`buxianxian.application` owns the TASK-003 single-session coordinator and its structural ports.
+Infrastructure implements those ports; the application session imports only application contracts,
+the domain, and the Python standard library.
+
+```text
+expected revision check
+        |
+        v
+fork official RNG -> candidate RNG
+        |
+        v
+pure domain transition
+        |
+        +-- Rejected -> discard candidate
+        |
+        v
+save candidate state + candidate RNG
+        |
+        +-- persistence failure -> retain official memory
+        |
+        v
+replace official in-memory state + RNG
+```
+
+This is transaction-like only within one process and one session. It does not provide locks,
+multi-process coordination, database transactions, event persistence, or replay. The application
+session is not connected to FastAPI or the frontend.
 
 ## Planned frontend boundaries
 

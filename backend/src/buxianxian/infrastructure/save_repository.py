@@ -9,6 +9,7 @@ from enum import StrEnum
 from json import JSONDecodeError
 from pathlib import Path
 
+from buxianxian.application.ports import PersistenceError
 from buxianxian.domain import GameState
 from buxianxian.infrastructure.random_source import (
     RandomStateSnapshot,
@@ -35,7 +36,7 @@ class SaveErrorCode(StrEnum):
     IO_ERROR = "io_error"
 
 
-class SaveError(Exception):
+class SaveError(PersistenceError):
     """Structured persistence error that hides incidental lower-level exceptions."""
 
     code: SaveErrorCode

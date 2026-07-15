@@ -61,6 +61,11 @@ class XorShift64StarRandom:
             state=f"{self._state:016x}",
         )
 
+    def fork(self) -> Self:
+        """Return an independent source at the same sequence position."""
+
+        return self.from_snapshot(self.snapshot())
+
     def integer_inclusive(self, minimum: int, maximum: int, /) -> int:
         """Return an unbiased integer in the inclusive interval."""
 
