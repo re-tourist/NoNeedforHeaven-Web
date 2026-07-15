@@ -1,0 +1,53 @@
+# Python
+.venv/
+venv/
+env/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.pyright/
+.ruff_cache/
+.mypy_cache/
+build/
+
+# Frontend
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.codex/
+.agents/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Private author workspace state and drafts
+authoring/.obsidian/
+authoring/.trash/
+authoring/private/
+authoring/drafts/
+
+# Local runtime data and generated artifacts
+/saves/
+/runtime-data/
+/artifacts/
+*.buxianxian-save
+*.save.json
+*.sav
+*.tmp
+*.log

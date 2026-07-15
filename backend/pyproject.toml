@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "buxianxian"
+version = "0.1.0"
+description = "不羡仙 local web runtime backend"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.116,<1",
+    "pydantic>=2.11,<3",
+    "uvicorn>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.5,<3",
+    "pyright>=1.1.403,<2",
+    "pytest>=8.4,<9",
+    "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/buxianxian"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["buxianxian"]
