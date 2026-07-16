@@ -1,4 +1,4 @@
-"""Versioned formal-state save, recovery, validation, and atomicity tests."""
+"""Versioned player-state save, recovery, validation, and atomicity tests."""
 
 import json
 from pathlib import Path
@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 
 import buxianxian.infrastructure.save_repository as save_repository_module
-from buxianxian.domain import Accepted, AdvanceTime, DomainEngine, GameState
+from buxianxian.domain import (
+    Accepted,
+    AdvanceTime,
+    DomainEngine,
+    GameState,
+    InnateAptitudes,
+    PlayerCharacter,
+)
 from buxianxian.infrastructure import (
     CURRENT_SCHEMA_VERSION,
     SAVE_FORMAT,
@@ -16,12 +23,40 @@ from buxianxian.infrastructure import (
     XorShift64StarRandom,
 )
 
+TEST_PLAYER = PlayerCharacter(
+    name="测试角色",
+    aptitudes=InnateAptitudes(5, 5, 5, 5, 5),
+    trait_ids=("trait.alpha", "trait.beta"),
+)
+
+
+def _state(revision: int, elapsed_days: int) -> GameState:
+    return GameState(revision=revision, elapsed_days=elapsed_days, player=TEST_PLAYER)
+
+
+def _player_payload() -> dict[str, object]:
+    return {
+        "name": "测试角色",
+        "aptitudes": {
+            "constitution": 5,
+            "comprehension": 5,
+            "spiritual_sense": 5,
+            "temperament": 5,
+            "fortune": 5,
+        },
+        "trait_ids": ["trait.alpha", "trait.beta"],
+    }
+
 
 def _valid_payload() -> dict[str, object]:
     return {
         "format": SAVE_FORMAT,
         "schema_version": CURRENT_SCHEMA_VERSION,
-        "state": {"revision": 2, "elapsed_days": 7},
+        "state": {
+            "revision": 2,
+            "elapsed_days": 7,
+            "player": _player_payload(),
+        },
         "random": {
             "algorithm": "xorshift64star",
             "version": 1,
@@ -40,10 +75,10 @@ def _assert_load_error(repository: JsonFileSaveRepository, code: SaveErrorCode) 
     assert captured.value.code is code
 
 
-def test_save_round_trip_preserves_formal_time_rng_and_format_markers(tmp_path: Path) -> None:
+def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path: Path) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    state = GameState(revision=4, elapsed_days=11)
+    state = _state(revision=4, elapsed_days=11)
     random_source = XorShift64StarRandom.from_seed(0xCAFE_BABE)
     random_source.integer_inclusive(1, 10)
     expected_random_state = random_source.snapshot()
@@ -55,15 +90,19 @@ def test_save_round_trip_preserves_formal_time_rng_and_format_markers(tmp_path: 
     assert loaded.random_source.snapshot() == expected_random_state
     decoded: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert decoded["format"] == "buxianxian-save"
-    assert decoded["schema_version"] == 2
-    assert decoded["state"] == {"elapsed_days": 11, "revision": 4}
+    assert decoded["schema_version"] == 3
+    assert decoded["state"] == {
+        "elapsed_days": 11,
+        "player": _player_payload(),
+        "revision": 4,
+    }
 
 
 def test_save_and_resume_matches_continuous_time_and_random_sequence(tmp_path: Path) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
     engine = DomainEngine()
-    uninterrupted_state = GameState(revision=0, elapsed_days=0)
-    interrupted_state = GameState(revision=0, elapsed_days=0)
+    uninterrupted_state = _state(revision=0, elapsed_days=0)
+    interrupted_state = _state(revision=0, elapsed_days=0)
     uninterrupted_random = XorShift64StarRandom.from_seed(0x1234_5678)
     interrupted_random = XorShift64StarRandom.from_seed(0x1234_5678)
 
@@ -141,11 +180,22 @@ def test_wrong_product_is_rejected(tmp_path: Path) -> None:
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.WRONG_PRODUCT)
 
 
-def test_pre_alpha_counter_schema_v1_is_explicitly_unsupported(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("schema_version", "state"),
+    [
+        (1, {"revision": 2, "counter": 7}),
+        (2, {"revision": 2, "elapsed_days": 7}),
+    ],
+)
+def test_pre_alpha_schema_without_player_is_explicitly_unsupported(
+    tmp_path: Path,
+    schema_version: int,
+    state: dict[str, object],
+) -> None:
     path = tmp_path / "save.json"
     payload = _valid_payload()
-    payload["schema_version"] = 1
-    payload["state"] = {"revision": 2, "counter": 7}
+    payload["schema_version"] = schema_version
+    payload["state"] = state
     _write_payload(path, payload)
 
     _assert_load_error(
@@ -169,10 +219,10 @@ def test_unknown_schema_version_is_rejected_before_guessing(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     "invalid_state",
     [
-        {"revision": -1, "elapsed_days": 7},
-        {"revision": 1, "elapsed_days": -1},
-        {"revision": 1, "elapsed_days": True},
-        {"revision": 1, "counter": 7},
+        {"revision": -1, "elapsed_days": 7, "player": _player_payload()},
+        {"revision": 1, "elapsed_days": -1, "player": _player_payload()},
+        {"revision": 1, "elapsed_days": True, "player": _player_payload()},
+        {"revision": 1, "elapsed_days": 7},
     ],
 )
 def test_invalid_formal_domain_state_is_rejected(
@@ -182,6 +232,42 @@ def test_invalid_formal_domain_state_is_rejected(
     path = tmp_path / "save.json"
     payload = _valid_payload()
     payload["state"] = invalid_state
+    _write_payload(path, payload)
+
+    _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
+
+
+@pytest.mark.parametrize(
+    "invalid_player",
+    [
+        {**_player_payload(), "name": "   "},
+        {
+            **_player_payload(),
+            "aptitudes": {
+                "constitution": 4,
+                "comprehension": 5,
+                "spiritual_sense": 5,
+                "temperament": 5,
+                "fortune": 5,
+            },
+        },
+        {**_player_payload(), "trait_ids": ["trait.alpha"]},
+        {**_player_payload(), "trait_ids": ["trait.alpha", "trait.alpha"]},
+        {**_player_payload(), "trait_ids": ["trait.beta", "trait.alpha"]},
+        {**_player_payload(), "trait_ids": ["trait.alpha", 7]},
+    ],
+)
+def test_invalid_player_profile_is_rejected(
+    tmp_path: Path,
+    invalid_player: dict[str, object],
+) -> None:
+    path = tmp_path / "save.json"
+    payload = _valid_payload()
+    payload["state"] = {
+        "revision": 0,
+        "elapsed_days": 0,
+        "player": invalid_player,
+    }
     _write_payload(path, payload)
 
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
@@ -233,13 +319,13 @@ def test_invalid_random_state_is_rejected(tmp_path: Path, invalid_state: str) ->
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_RANDOM_STATE)
 
 
-def test_replace_failure_preserves_old_time_save_and_cleans_temporary_file(
+def test_replace_failure_preserves_old_complete_save_and_cleans_temporary_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    old_state = GameState(revision=1, elapsed_days=9)
+    old_state = _state(revision=1, elapsed_days=9)
     old_random = XorShift64StarRandom.from_seed(7)
     old_random_snapshot = old_random.snapshot()
     repository.save(old_state, old_random)
@@ -252,7 +338,7 @@ def test_replace_failure_preserves_old_time_save_and_cleans_temporary_file(
 
     with pytest.raises(SaveError) as captured:
         repository.save(
-            GameState(revision=2, elapsed_days=12),
+            _state(revision=2, elapsed_days=12),
             XorShift64StarRandom.from_seed(99),
         )
 

@@ -1,7 +1,11 @@
 # ADR-006: Authoritative elapsed days and pre-alpha save v2
 
-- Status: Accepted
+- Status: Superseded in part by ADR-007
 - Date: 2026-07-16
+
+ADR-007 supersedes only the minimal player-less state shape and current schema-v2 statement.
+Elapsed days, numeric bounds, pre-alpha compatibility policy, and direct `AdvanceTime` semantics
+remain accepted.
 
 ## Context
 

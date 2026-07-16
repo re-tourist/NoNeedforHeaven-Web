@@ -2,21 +2,27 @@
 
 This package contains the local Python runtime. The API exposes only the TASK-000 engineering health check. The pure `buxianxian.domain` package implements the TASK-001 headless deterministic transition contract and is intentionally not exposed through HTTP yet.
 
-`buxianxian.infrastructure` implements the `buxianxian-save` JSON v2 file adapter and the versioned
-`xorshift64star` random source. Schema v2 stores revision and authoritative elapsed days; the
-experimental counter-based schema v1 is explicitly unsupported. Persistence depends on the domain
-contract; the domain does not depend on persistence, JSON, Pydantic, or the filesystem. Tests use
-pytest temporary directories and do not create player saves in the repository.
+`buxianxian.infrastructure` implements the `buxianxian-save` JSON v3 file adapter and the versioned
+`xorshift64star` random source. Schema v3 stores the complete player, revision, authoritative elapsed
+days, and RNG state; experimental schemas v1/v2 are explicitly unsupported. Persistence depends on
+the domain contract; the domain does not depend on persistence, JSON, Pydantic, or the filesystem.
+Tests use pytest temporary directories and do not create player saves in the repository.
 
 `buxianxian.application` implements the TASK-003 headless persistent session. A caller supplies an expected state revision; the session evaluates a command with a forked candidate RNG, saves accepted candidate state/RNG, and changes its official in-memory values only after the save succeeds. Conflict, domain rejection, and persistence failure are distinct result types. Application ports keep the session independent of FastAPI and the concrete JSON adapter.
+
+TASK-006 adds `NewGameService` before that session boundary. It generates a private character-creation
+draft on a forked RNG, revalidates the selected aptitude/name/trait IDs, saves the complete initial
+state plus post-generation RNG, and creates a session only after save success. No formal trait
+catalog or trait effects ship in production code.
 
 `buxianxian.infrastructure.content` implements the TASK-004 authoring compiler. It validates only an
 explicit published Markdown directory, supports the restricted `read_only_document` v1 contract,
 and atomically writes a deterministic `buxianxian-content` JSON v1 package. It has no domain,
 application-session, save, FastAPI, frontend, Obsidian, or private-vault dependency.
 
-TASK-005 defines the first formal mechanism: `GameState(revision, elapsed_days)` and a bounded
-`AdvanceTime` command with a `TimeAdvanced` event. It does not define a calendar, age, lifespan,
-daily simulation, or any other gameplay system. The session is not exposed through an API or UI.
+TASK-005 defines the first formal mechanism: a bounded `AdvanceTime` command with a `TimeAdvanced`
+event. TASK-006 extends the complete formal state to `GameState(revision, elapsed_days, player)`
+without changing the time command. It does not define a calendar, age, lifespan, daily simulation,
+or any other gameplay system. The session and new-game service are not exposed through an API or UI.
 
 See the repository root `README.md` for setup, development, and verification commands.

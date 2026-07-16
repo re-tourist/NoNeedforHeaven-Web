@@ -18,6 +18,8 @@ from buxianxian.domain import (
     Command,
     DomainEngine,
     GameState,
+    InnateAptitudes,
+    PlayerCharacter,
     RandomSource,
     RejectionReason,
     TimeAdvanced,
@@ -30,6 +32,16 @@ from buxianxian.infrastructure import (
     SaveErrorCode,
     XorShift64StarRandom,
 )
+
+TEST_PLAYER = PlayerCharacter(
+    name="测试角色",
+    aptitudes=InnateAptitudes(5, 5, 5, 5, 5),
+    trait_ids=("trait.alpha", "trait.beta"),
+)
+
+
+def _state(revision: int, elapsed_days: int) -> GameState:
+    return GameState(revision=revision, elapsed_days=elapsed_days, player=TEST_PLAYER)
 
 
 class CountingDomainEngine(DomainEngine):
@@ -82,7 +94,7 @@ class RecordingRepository:
 
 
 def test_session_can_start_from_explicit_formal_state_and_rng_without_saving() -> None:
-    state = GameState(revision=3, elapsed_days=8)
+    state = _state(revision=3, elapsed_days=8)
     random_source = XorShift64StarRandom.from_seed(11)
     repository = RecordingRepository()
 
@@ -99,9 +111,9 @@ def test_session_can_start_from_explicit_formal_state_and_rng_without_saving() -
     assert session.fork_random_source().snapshot() == random_source.snapshot()
 
 
-def test_session_can_start_from_existing_schema_v2_save(tmp_path: Path) -> None:
+def test_session_can_start_from_existing_schema_v3_save(tmp_path: Path) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
-    state = GameState(revision=5, elapsed_days=13)
+    state = _state(revision=5, elapsed_days=13)
     random_source = XorShift64StarRandom.from_seed(0x1234)
     random_source.integer_inclusive(1, 10)
     repository.save(state, random_source)
@@ -123,7 +135,7 @@ def test_valid_revision_commits_time_to_memory_and_disk_without_advancing_rng(
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
         XorShift64StarRandom
     ].from_initial(
-        GameState(revision=0, elapsed_days=10),
+        _state(revision=0, elapsed_days=10),
         random_source,
         repository,
     )
@@ -132,7 +144,7 @@ def test_valid_revision_commits_time_to_memory_and_disk_without_advancing_rng(
 
     assert isinstance(result, CommitSucceeded)
     assert result == CommitSucceeded(
-        state=GameState(revision=1, elapsed_days=13),
+        state=_state(revision=1, elapsed_days=13),
         events=(
             TimeAdvanced(
                 previous_elapsed_days=10,
@@ -150,7 +162,7 @@ def test_valid_revision_commits_time_to_memory_and_disk_without_advancing_rng(
 
 
 def test_revision_conflict_does_not_advance_time_rng_or_persistence() -> None:
-    state = GameState(revision=4, elapsed_days=10)
+    state = _state(revision=4, elapsed_days=10)
     random_source = XorShift64StarRandom.from_seed(23)
     original_random_state = random_source.snapshot()
     repository = RecordingRepository()
@@ -169,7 +181,7 @@ def test_revision_conflict_does_not_advance_time_rng_or_persistence() -> None:
 
 
 def test_domain_rejection_preserves_time_rng_and_skips_persistence() -> None:
-    state = GameState(revision=0, elapsed_days=1)
+    state = _state(revision=0, elapsed_days=1)
     random_source = XorShift64StarRandom.from_seed(29)
     original_random_state = random_source.snapshot()
     repository = RecordingRepository()
@@ -192,7 +204,7 @@ def test_atomic_save_failure_preserves_time_memory_rng_and_previous_disk_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
-    old_state = GameState(revision=2, elapsed_days=10)
+    old_state = _state(revision=2, elapsed_days=10)
     old_random = XorShift64StarRandom.from_seed(31)
     repository.save(old_state, old_random)
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
@@ -221,7 +233,7 @@ def test_atomic_save_failure_preserves_time_memory_rng_and_previous_disk_save(
 
 
 def test_retry_after_save_failure_commits_the_same_time_and_rng_candidate() -> None:
-    state = GameState(revision=0, elapsed_days=10)
+    state = _state(revision=0, elapsed_days=10)
     repository = RecordingRepository(fail_saves=True)
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
         XorShift64StarRandom
@@ -246,7 +258,7 @@ def test_retry_after_save_failure_commits_the_same_time_and_rng_candidate() -> N
 
     assert isinstance(retry_result, CommitSucceeded)
     assert retry_result.state == first_candidate.state == retry_candidate.state
-    assert retry_result.state == GameState(revision=1, elapsed_days=13)
+    assert retry_result.state == _state(revision=1, elapsed_days=13)
     assert (
         first_candidate.random_source.snapshot()
         == retry_candidate.random_source.snapshot()

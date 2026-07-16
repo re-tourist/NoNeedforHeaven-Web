@@ -29,8 +29,9 @@ This is the target direction. P1 implements the engineering shell and connectivi
 adds the pure headless domain kernel. TASK-002 begins P3 with versioned snapshot persistence and a
 recoverable deterministic random source. TASK-003 adds the headless persistent-session commit
 boundary. TASK-004 begins a separate P4 slice with published read-only-document compilation only;
-TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. Runtime content
-loading, HTTP integration, replay, other content contracts, and all other gameplay remain deferred.
+TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. TASK-006 adds
+deterministic pre-session character creation and a complete player-bearing state.
+Runtime content loading, HTTP integration, replay, and all other gameplay remain deferred.
 
 ## Authority boundary
 
@@ -91,11 +92,11 @@ concrete deterministic RNG    -> domain RandomSource protocol
 domain                        -X-> infrastructure
 ```
 
-The `buxianxian-save` v2 snapshot contains a complete authoritative `GameState` plus an explicitly
+The `buxianxian-save` v3 snapshot contains a complete authoritative `GameState` plus an explicitly
 identified and versioned random state. Loading dispatches on the save schema version. Events are not
-persisted or replayed. Experimental counter-based schema v1 is explicitly unsupported rather than
-fictionally migrated. See ADR-004 for snapshot/RNG/atomic-write decisions and ADR-006 for the formal
-state shape, schema v2, and pre-alpha compatibility policy.
+persisted or replayed. Experimental schemas v1 and v2 are explicitly unsupported rather than
+fictionally migrated. See ADR-004 for snapshot/RNG/atomic-write decisions, ADR-006 for authoritative
+time and compatibility policy, and ADR-007 for player state and schema v3.
 
 ## Current authoritative time boundary
 
@@ -104,7 +105,11 @@ The complete current formal state is:
 ```text
 GameState
 ├─ revision: non-negative integer
-└─ elapsed_days: non-negative integer since game start
+├─ elapsed_days: non-negative integer since game start
+└─ player: PlayerCharacter
+   ├─ name: normalized Unicode string
+   ├─ aptitudes: five integers, each 1–10, total 25
+   └─ trait_ids: two distinct stable IDs in canonical order
 ```
 
 `AdvanceTime(days)` is validated and handled only in the pure domain. Success creates an independent
@@ -114,6 +119,35 @@ forks and saves the candidate RNG with the candidate state before committing off
 
 Elapsed days are the authority. Years, months, hours, seasons, named eras, age, lifespan, schedules,
 and world reactions are neither stored nor inferred in TASK-005.
+
+## Current new-game boundary
+
+Character creation exists before formal session state:
+
+```text
+caller RNG
+    |
+    v
+fork candidate RNG -> deterministic aptitude/trait candidates
+    |
+    v
+player confirmation -> complete GameState(revision=0, elapsed_days=0, player)
+    |
+    v
+atomic save of state + post-generation RNG
+    |
+    v
+PersistentGameSession
+```
+
+Invalid generation or confirmation exposes no `GameState`. Save failure exposes no session. The
+caller RNG remains unchanged; the draft owns the consumed candidate position and can be retried
+without reversing random draws. Trait definitions are supplied explicitly to the service and are
+not loaded from TASK-004 content packages.
+
+`AdvanceTime` is only a direct time-skip command. Future commands that perform gameplay and consume
+time must update both in one domain transition. Effects and time must never be persisted as two
+separate commands.
 
 ## Current application commit boundary
 
@@ -198,7 +232,7 @@ No category should silently serve as another.
 
 Decisions still deferred:
 
-- additional player/world state beyond revision and elapsed days;
+- additional player/world state beyond the current identity, aptitudes, trait IDs, and time;
 - replay-log and event-persistence format;
 - concrete migration tooling for released save versions;
 - additional content schemas and cross-entry reference validation;

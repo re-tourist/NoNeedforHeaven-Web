@@ -138,6 +138,10 @@ Each capability requires its own specification and tests. No named story content
 TASK-005 implements only the authoritative elapsed-day time item as an explicitly approved
 foundational slice. It does not complete P7 or pull forward any other candidate capability.
 
+TASK-006 adds only the pre-session player identity, innate-aptitude candidate, and selected-trait-ID
+foundation. It does not define trait effects, progression, cultivation, combat attributes, or
+another gameplay loop.
+
 ## P8 — Authoring tools
 
 Deliverables may include:

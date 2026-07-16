@@ -10,14 +10,14 @@ from json import JSONDecodeError
 from pathlib import Path
 
 from buxianxian.application.ports import PersistenceError
-from buxianxian.domain import GameState
+from buxianxian.domain import GameState, InnateAptitudes, PlayerCharacter
 from buxianxian.infrastructure.random_source import (
     RandomStateSnapshot,
     XorShift64StarRandom,
 )
 
 SAVE_FORMAT = "buxianxian-save"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -65,7 +65,7 @@ class JsonFileSaveRepository:
     def save(self, state: GameState, random_source: XorShift64StarRandom) -> None:
         """Serialize completely, then atomically replace the configured save."""
 
-        payload = _encode_v2(state, random_source.snapshot())
+        payload = _encode_v3(state, random_source.snapshot())
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(self.path, serialized)
 
@@ -101,7 +101,7 @@ class JsonFileSaveRepository:
         return loader(payload)
 
 
-def _encode_v2(
+def _encode_v3(
     state: GameState,
     random_state: RandomStateSnapshot,
 ) -> dict[str, JsonValue]:
@@ -111,6 +111,17 @@ def _encode_v2(
         "state": {
             "revision": state.revision,
             "elapsed_days": state.elapsed_days,
+            "player": {
+                "name": state.player.name,
+                "aptitudes": {
+                    "constitution": state.player.aptitudes.constitution,
+                    "comprehension": state.player.aptitudes.comprehension,
+                    "spiritual_sense": state.player.aptitudes.spiritual_sense,
+                    "temperament": state.player.aptitudes.temperament,
+                    "fortune": state.player.aptitudes.fortune,
+                },
+                "trait_ids": list(state.player.trait_ids),
+            },
         },
         "random": {
             "algorithm": random_state.algorithm,
@@ -120,7 +131,7 @@ def _encode_v2(
     }
 
 
-def _load_v2(payload: dict[str, JsonValue]) -> LoadedSave:
+def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
     _require_exact_fields(
         payload,
         frozenset({"format", "schema_version", "state", "random"}),
@@ -131,14 +142,84 @@ def _load_v2(payload: dict[str, JsonValue]) -> LoadedSave:
     state_payload = _required_object(payload, "state", SaveErrorCode.INVALID_DATA)
     _require_exact_fields(
         state_payload,
-        frozenset({"revision", "elapsed_days"}),
+        frozenset({"revision", "elapsed_days", "player"}),
         SaveErrorCode.INVALID_DATA,
         "domain state",
     )
     revision = _required_integer(state_payload, "revision", SaveErrorCode.INVALID_DATA)
     elapsed_days = _required_integer(state_payload, "elapsed_days", SaveErrorCode.INVALID_DATA)
+
+    player_payload = _required_object(state_payload, "player", SaveErrorCode.INVALID_DATA)
+    _require_exact_fields(
+        player_payload,
+        frozenset({"name", "aptitudes", "trait_ids"}),
+        SaveErrorCode.INVALID_DATA,
+        "player",
+    )
+    name = _required_string(player_payload, "name", SaveErrorCode.INVALID_DATA)
+
+    aptitudes_payload = _required_object(
+        player_payload,
+        "aptitudes",
+        SaveErrorCode.INVALID_DATA,
+    )
+    _require_exact_fields(
+        aptitudes_payload,
+        frozenset(
+            {
+                "constitution",
+                "comprehension",
+                "spiritual_sense",
+                "temperament",
+                "fortune",
+            }
+        ),
+        SaveErrorCode.INVALID_DATA,
+        "player aptitudes",
+    )
+    constitution = _required_integer(
+        aptitudes_payload,
+        "constitution",
+        SaveErrorCode.INVALID_DATA,
+    )
+    comprehension = _required_integer(
+        aptitudes_payload,
+        "comprehension",
+        SaveErrorCode.INVALID_DATA,
+    )
+    spiritual_sense = _required_integer(
+        aptitudes_payload,
+        "spiritual_sense",
+        SaveErrorCode.INVALID_DATA,
+    )
+    temperament = _required_integer(
+        aptitudes_payload,
+        "temperament",
+        SaveErrorCode.INVALID_DATA,
+    )
+    fortune = _required_integer(aptitudes_payload, "fortune", SaveErrorCode.INVALID_DATA)
+
+    trait_ids_payload = _required_array(player_payload, "trait_ids", SaveErrorCode.INVALID_DATA)
+    trait_ids: list[str] = []
+    for trait_id in trait_ids_payload:
+        if not isinstance(trait_id, str):
+            raise SaveError(SaveErrorCode.INVALID_DATA, "trait IDs must be strings")
+        trait_ids.append(trait_id)
+
     try:
-        state = GameState(revision=revision, elapsed_days=elapsed_days)
+        aptitudes = InnateAptitudes(
+            constitution=constitution,
+            comprehension=comprehension,
+            spiritual_sense=spiritual_sense,
+            temperament=temperament,
+            fortune=fortune,
+        )
+        player = PlayerCharacter(
+            name=name,
+            aptitudes=aptitudes,
+            trait_ids=tuple(trait_ids),
+        )
+        state = GameState(revision=revision, elapsed_days=elapsed_days, player=player)
     except ValueError:
         raise SaveError(SaveErrorCode.INVALID_DATA, "domain state is invalid") from None
 
@@ -195,7 +276,7 @@ def _load_v2(payload: dict[str, JsonValue]) -> LoadedSave:
 type _VersionLoader = Callable[[dict[str, JsonValue]], LoadedSave]
 
 _VERSION_LOADERS: dict[int, _VersionLoader] = {
-    CURRENT_SCHEMA_VERSION: _load_v2,
+    CURRENT_SCHEMA_VERSION: _load_v3,
 }
 
 
@@ -215,6 +296,17 @@ def _required_object(
 ) -> dict[str, JsonValue]:
     value = _required_value(payload, field, error_code)
     return _require_object_value(value, error_code, field)
+
+
+def _required_array(
+    payload: dict[str, JsonValue],
+    field: str,
+    error_code: SaveErrorCode,
+) -> list[JsonValue]:
+    value = _required_value(payload, field, error_code)
+    if not isinstance(value, list):
+        raise SaveError(error_code, f"{field} must be an array")
+    return value
 
 
 def _require_object_value(

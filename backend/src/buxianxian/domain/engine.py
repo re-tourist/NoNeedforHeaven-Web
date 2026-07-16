@@ -47,6 +47,7 @@ def _handle_advance_time(state: GameState, command: AdvanceTime) -> TransitionRe
     new_state = GameState(
         revision=state.revision + 1,
         elapsed_days=current_elapsed_days,
+        player=state.player,
     )
     return Accepted(
         state=new_state,
