@@ -1,4 +1,4 @@
-"""Versioned save-format, recovery, validation, and atomicity tests."""
+"""Versioned formal-state save, recovery, validation, and atomicity tests."""
 
 import json
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import buxianxian.infrastructure.save_repository as save_repository_module
-from buxianxian.domain import Accepted, ConsumeRandomCounter, DomainEngine, GameState
+from buxianxian.domain import Accepted, AdvanceTime, DomainEngine, GameState
 from buxianxian.infrastructure import (
     CURRENT_SCHEMA_VERSION,
     SAVE_FORMAT,
@@ -21,7 +21,7 @@ def _valid_payload() -> dict[str, object]:
     return {
         "format": SAVE_FORMAT,
         "schema_version": CURRENT_SCHEMA_VERSION,
-        "state": {"revision": 2, "counter": 7},
+        "state": {"revision": 2, "elapsed_days": 7},
         "random": {
             "algorithm": "xorshift64star",
             "version": 1,
@@ -40,10 +40,10 @@ def _assert_load_error(repository: JsonFileSaveRepository, code: SaveErrorCode) 
     assert captured.value.code is code
 
 
-def test_save_round_trip_preserves_state_rng_and_format_markers(tmp_path: Path) -> None:
+def test_save_round_trip_preserves_formal_time_rng_and_format_markers(tmp_path: Path) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    state = GameState(revision=4, counter=11)
+    state = GameState(revision=4, elapsed_days=11)
     random_source = XorShift64StarRandom.from_seed(0xCAFE_BABE)
     random_source.integer_inclusive(1, 10)
     expected_random_state = random_source.snapshot()
@@ -55,19 +55,20 @@ def test_save_round_trip_preserves_state_rng_and_format_markers(tmp_path: Path) 
     assert loaded.random_source.snapshot() == expected_random_state
     decoded: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert decoded["format"] == "buxianxian-save"
-    assert decoded["schema_version"] == 1
+    assert decoded["schema_version"] == 2
+    assert decoded["state"] == {"elapsed_days": 11, "revision": 4}
 
 
-def test_save_and_resume_matches_continuous_domain_execution(tmp_path: Path) -> None:
+def test_save_and_resume_matches_continuous_time_and_random_sequence(tmp_path: Path) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
     engine = DomainEngine()
-    command = ConsumeRandomCounter(minimum=1, maximum=3)
-    uninterrupted_state = GameState(revision=0, counter=100)
-    interrupted_state = GameState(revision=0, counter=100)
+    uninterrupted_state = GameState(revision=0, elapsed_days=0)
+    interrupted_state = GameState(revision=0, elapsed_days=0)
     uninterrupted_random = XorShift64StarRandom.from_seed(0x1234_5678)
     interrupted_random = XorShift64StarRandom.from_seed(0x1234_5678)
 
-    for _ in range(3):
+    for days in (1, 3, 2):
+        command = AdvanceTime(days=days)
         uninterrupted_result = engine.transition(
             uninterrupted_state,
             command,
@@ -78,15 +79,19 @@ def test_save_and_resume_matches_continuous_domain_execution(tmp_path: Path) -> 
         assert uninterrupted_result == interrupted_result
         uninterrupted_state = uninterrupted_result.state
         interrupted_state = interrupted_result.state
+        assert uninterrupted_random.integer_inclusive(1, 100) == (
+            interrupted_random.integer_inclusive(1, 100)
+        )
 
     repository.save(interrupted_state, interrupted_random)
     loaded = repository.load()
     resumed_state = loaded.state
     resumed_random = loaded.random_source
 
-    uninterrupted_amounts: list[int] = []
-    resumed_amounts: list[int] = []
-    for _ in range(8):
+    uninterrupted_values: list[int] = []
+    resumed_values: list[int] = []
+    for days in (5, 1, 10, 4):
+        command = AdvanceTime(days=days)
         uninterrupted_result = engine.transition(
             uninterrupted_state,
             command,
@@ -95,12 +100,13 @@ def test_save_and_resume_matches_continuous_domain_execution(tmp_path: Path) -> 
         resumed_result = engine.transition(resumed_state, command, resumed_random)
         assert isinstance(uninterrupted_result, Accepted)
         assert isinstance(resumed_result, Accepted)
-        uninterrupted_amounts.append(uninterrupted_result.events[0].amount)
-        resumed_amounts.append(resumed_result.events[0].amount)
+        assert uninterrupted_result == resumed_result
         uninterrupted_state = uninterrupted_result.state
         resumed_state = resumed_result.state
+        uninterrupted_values.append(uninterrupted_random.integer_inclusive(1, 100))
+        resumed_values.append(resumed_random.integer_inclusive(1, 100))
 
-    assert resumed_amounts == uninterrupted_amounts
+    assert resumed_values == uninterrupted_values
     assert resumed_state == uninterrupted_state
     assert resumed_random.snapshot() == uninterrupted_random.snapshot()
 
@@ -135,7 +141,20 @@ def test_wrong_product_is_rejected(tmp_path: Path) -> None:
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.WRONG_PRODUCT)
 
 
-def test_unsupported_schema_version_is_rejected_before_guessing(tmp_path: Path) -> None:
+def test_pre_alpha_counter_schema_v1_is_explicitly_unsupported(tmp_path: Path) -> None:
+    path = tmp_path / "save.json"
+    payload = _valid_payload()
+    payload["schema_version"] = 1
+    payload["state"] = {"revision": 2, "counter": 7}
+    _write_payload(path, payload)
+
+    _assert_load_error(
+        JsonFileSaveRepository(path),
+        SaveErrorCode.UNSUPPORTED_SCHEMA_VERSION,
+    )
+
+
+def test_unknown_schema_version_is_rejected_before_guessing(tmp_path: Path) -> None:
     path = tmp_path / "save.json"
     payload = _valid_payload()
     payload["schema_version"] = 99
@@ -147,10 +166,22 @@ def test_unsupported_schema_version_is_rejected_before_guessing(tmp_path: Path) 
     )
 
 
-def test_invalid_domain_state_is_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "invalid_state",
+    [
+        {"revision": -1, "elapsed_days": 7},
+        {"revision": 1, "elapsed_days": -1},
+        {"revision": 1, "elapsed_days": True},
+        {"revision": 1, "counter": 7},
+    ],
+)
+def test_invalid_formal_domain_state_is_rejected(
+    tmp_path: Path,
+    invalid_state: dict[str, object],
+) -> None:
     path = tmp_path / "save.json"
     payload = _valid_payload()
-    payload["state"] = {"revision": -1, "counter": 7}
+    payload["state"] = invalid_state
     _write_payload(path, payload)
 
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
@@ -202,13 +233,13 @@ def test_invalid_random_state_is_rejected(tmp_path: Path, invalid_state: str) ->
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_RANDOM_STATE)
 
 
-def test_replace_failure_preserves_old_save_and_cleans_temporary_file(
+def test_replace_failure_preserves_old_time_save_and_cleans_temporary_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    old_state = GameState(revision=1, counter=9)
+    old_state = GameState(revision=1, elapsed_days=9)
     old_random = XorShift64StarRandom.from_seed(7)
     old_random_snapshot = old_random.snapshot()
     repository.save(old_state, old_random)
@@ -221,7 +252,7 @@ def test_replace_failure_preserves_old_save_and_cleans_temporary_file(
 
     with pytest.raises(SaveError) as captured:
         repository.save(
-            GameState(revision=2, counter=3),
+            GameState(revision=2, elapsed_days=12),
             XorShift64StarRandom.from_seed(99),
         )
 

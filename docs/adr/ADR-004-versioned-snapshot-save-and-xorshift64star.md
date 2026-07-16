@@ -1,7 +1,11 @@
 # ADR-004: Versioned snapshot saves and xorshift64star state
 
-- Status: Accepted
+- Status: Superseded in part by ADR-006
 - Date: 2026-07-15
+
+ADR-006 supersedes only the experimental schema-v1 state shape and current-version statement.
+Snapshot authority, random compatibility, JSON safety, version dispatch, and atomic replacement
+remain accepted.
 
 ## Context
 

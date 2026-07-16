@@ -1,57 +1,57 @@
-"""Pure domain data contracts for deterministic state transitions."""
+"""Pure domain contracts for authoritative game-time transitions."""
 
 from dataclasses import dataclass
 from enum import StrEnum
 
+MAX_ADVANCE_DAYS = 1_000_000
+MAX_ELAPSED_DAYS = (1 << 63) - 1
+
 
 @dataclass(frozen=True, slots=True)
 class GameState:
-    """Minimal authoritative facts used to verify the domain-kernel contract."""
+    """Complete current authoritative game facts."""
 
     revision: int
-    counter: int
+    elapsed_days: int
 
     def __post_init__(self) -> None:
-        if self.revision < 0:
-            raise ValueError("revision must be non-negative")
-        if self.counter < 0:
-            raise ValueError("counter must be non-negative")
+        if type(self.revision) is not int or self.revision < 0:
+            raise ValueError("revision must be a non-negative integer")
+        if (
+            type(self.elapsed_days) is not int
+            or self.elapsed_days < 0
+            or self.elapsed_days > MAX_ELAPSED_DAYS
+        ):
+            raise ValueError("elapsed_days must be a non-negative signed 64-bit integer")
 
 
 @dataclass(frozen=True, slots=True)
-class ConsumeCounter:
-    """Request consumption of an exact synthetic counter amount."""
+class AdvanceTime:
+    """Request that authoritative game time advance by a number of days."""
 
-    amount: int
-
-
-@dataclass(frozen=True, slots=True)
-class ConsumeRandomCounter:
-    """Request consumption of a source-selected inclusive counter amount."""
-
-    minimum: int
-    maximum: int
+    days: int
 
 
-type Command = ConsumeCounter | ConsumeRandomCounter
+type Command = AdvanceTime
 
 
 @dataclass(frozen=True, slots=True)
-class CounterConsumed:
-    """Fact that a synthetic counter amount was consumed successfully."""
+class TimeAdvanced:
+    """Fact that authoritative game time advanced successfully."""
 
-    amount: int
+    previous_elapsed_days: int
+    current_elapsed_days: int
+    days_elapsed: int
 
 
-type DomainEvent = CounterConsumed
+type DomainEvent = TimeAdvanced
 
 
 class RejectionReason(StrEnum):
     """Stable reasons for expected command rejection."""
 
-    INVALID_AMOUNT = "invalid_amount"
-    INVALID_RANDOM_RANGE = "invalid_random_range"
-    INSUFFICIENT_COUNTER = "insufficient_counter"
+    INVALID_DAY_COUNT = "invalid_day_count"
+    DAY_COUNT_OUT_OF_RANGE = "day_count_out_of_range"
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,30 +2,32 @@
 
 from buxianxian.domain.engine import DomainEngine
 from buxianxian.domain.model import (
+    MAX_ADVANCE_DAYS,
+    MAX_ELAPSED_DAYS,
     Accepted,
+    AdvanceTime,
     Command,
-    ConsumeCounter,
-    ConsumeRandomCounter,
-    CounterConsumed,
     DomainEvent,
     GameState,
     Rejected,
     RejectionReason,
+    TimeAdvanced,
     TransitionResult,
 )
 from buxianxian.domain.random_source import RandomSource
 
 __all__ = [
+    "MAX_ADVANCE_DAYS",
+    "MAX_ELAPSED_DAYS",
     "Accepted",
+    "AdvanceTime",
     "Command",
-    "ConsumeCounter",
-    "ConsumeRandomCounter",
-    "CounterConsumed",
     "DomainEngine",
     "DomainEvent",
     "GameState",
     "RandomSource",
     "Rejected",
     "RejectionReason",
+    "TimeAdvanced",
     "TransitionResult",
 ]

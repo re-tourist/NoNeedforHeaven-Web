@@ -17,7 +17,7 @@ from buxianxian.infrastructure.random_source import (
 )
 
 SAVE_FORMAT = "buxianxian-save"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -65,7 +65,7 @@ class JsonFileSaveRepository:
     def save(self, state: GameState, random_source: XorShift64StarRandom) -> None:
         """Serialize completely, then atomically replace the configured save."""
 
-        payload = _encode_v1(state, random_source.snapshot())
+        payload = _encode_v2(state, random_source.snapshot())
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(self.path, serialized)
 
@@ -101,7 +101,7 @@ class JsonFileSaveRepository:
         return loader(payload)
 
 
-def _encode_v1(
+def _encode_v2(
     state: GameState,
     random_state: RandomStateSnapshot,
 ) -> dict[str, JsonValue]:
@@ -110,7 +110,7 @@ def _encode_v1(
         "schema_version": CURRENT_SCHEMA_VERSION,
         "state": {
             "revision": state.revision,
-            "counter": state.counter,
+            "elapsed_days": state.elapsed_days,
         },
         "random": {
             "algorithm": random_state.algorithm,
@@ -120,7 +120,7 @@ def _encode_v1(
     }
 
 
-def _load_v1(payload: dict[str, JsonValue]) -> LoadedSave:
+def _load_v2(payload: dict[str, JsonValue]) -> LoadedSave:
     _require_exact_fields(
         payload,
         frozenset({"format", "schema_version", "state", "random"}),
@@ -131,14 +131,14 @@ def _load_v1(payload: dict[str, JsonValue]) -> LoadedSave:
     state_payload = _required_object(payload, "state", SaveErrorCode.INVALID_DATA)
     _require_exact_fields(
         state_payload,
-        frozenset({"revision", "counter"}),
+        frozenset({"revision", "elapsed_days"}),
         SaveErrorCode.INVALID_DATA,
         "domain state",
     )
     revision = _required_integer(state_payload, "revision", SaveErrorCode.INVALID_DATA)
-    counter = _required_integer(state_payload, "counter", SaveErrorCode.INVALID_DATA)
+    elapsed_days = _required_integer(state_payload, "elapsed_days", SaveErrorCode.INVALID_DATA)
     try:
-        state = GameState(revision=revision, counter=counter)
+        state = GameState(revision=revision, elapsed_days=elapsed_days)
     except ValueError:
         raise SaveError(SaveErrorCode.INVALID_DATA, "domain state is invalid") from None
 
@@ -195,7 +195,7 @@ def _load_v1(payload: dict[str, JsonValue]) -> LoadedSave:
 type _VersionLoader = Callable[[dict[str, JsonValue]], LoadedSave]
 
 _VERSION_LOADERS: dict[int, _VersionLoader] = {
-    CURRENT_SCHEMA_VERSION: _load_v1,
+    CURRENT_SCHEMA_VERSION: _load_v2,
 }
 
 

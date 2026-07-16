@@ -1,4 +1,4 @@
-"""Transactional behavior tests for the headless persistent game session."""
+"""Transactional behavior tests for authoritative time in a persistent session."""
 
 from pathlib import Path
 
@@ -14,12 +14,13 @@ from buxianxian.application import (
     RevisionConflict,
 )
 from buxianxian.domain import (
+    AdvanceTime,
     Command,
-    ConsumeRandomCounter,
     DomainEngine,
     GameState,
     RandomSource,
     RejectionReason,
+    TimeAdvanced,
     TransitionResult,
 )
 from buxianxian.infrastructure import (
@@ -80,8 +81,8 @@ class RecordingRepository:
         )
 
 
-def test_session_can_start_from_explicit_state_and_rng_without_saving() -> None:
-    state = GameState(revision=3, counter=8)
+def test_session_can_start_from_explicit_formal_state_and_rng_without_saving() -> None:
+    state = GameState(revision=3, elapsed_days=8)
     random_source = XorShift64StarRandom.from_seed(11)
     repository = RecordingRepository()
 
@@ -98,9 +99,9 @@ def test_session_can_start_from_explicit_state_and_rng_without_saving() -> None:
     assert session.fork_random_source().snapshot() == random_source.snapshot()
 
 
-def test_session_can_start_from_existing_task002_save(tmp_path: Path) -> None:
+def test_session_can_start_from_existing_schema_v2_save(tmp_path: Path) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
-    state = GameState(revision=5, counter=13)
+    state = GameState(revision=5, elapsed_days=13)
     random_source = XorShift64StarRandom.from_seed(0x1234)
     random_source.integer_inclusive(1, 10)
     repository.save(state, random_source)
@@ -113,33 +114,43 @@ def test_session_can_start_from_existing_task002_save(tmp_path: Path) -> None:
     assert session.fork_random_source().snapshot() == random_source.snapshot()
 
 
-def test_valid_revision_commits_state_events_and_rng_to_memory_and_disk(tmp_path: Path) -> None:
+def test_valid_revision_commits_time_to_memory_and_disk_without_advancing_rng(
+    tmp_path: Path,
+) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
+    random_source = XorShift64StarRandom.from_seed(0xCAFE)
+    original_random_state = random_source.snapshot()
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
         XorShift64StarRandom
     ].from_initial(
-        GameState(revision=0, counter=10),
-        XorShift64StarRandom.from_seed(0xCAFE),
+        GameState(revision=0, elapsed_days=10),
+        random_source,
         repository,
     )
 
-    result = session.submit(
-        ConsumeRandomCounter(minimum=1, maximum=3),
-        expected_revision=0,
-    )
+    result = session.submit(AdvanceTime(days=3), expected_revision=0)
 
     assert isinstance(result, CommitSucceeded)
-    assert result.state.revision == 1
+    assert result == CommitSucceeded(
+        state=GameState(revision=1, elapsed_days=13),
+        events=(
+            TimeAdvanced(
+                previous_elapsed_days=10,
+                current_elapsed_days=13,
+                days_elapsed=3,
+            ),
+        ),
+    )
     assert session.state == result.state
-    assert len(result.events) == 1
+    assert session.fork_random_source().snapshot() == original_random_state
 
     loaded = repository.load()
     assert loaded.state == session.state
-    assert loaded.random_source.snapshot() == session.fork_random_source().snapshot()
+    assert loaded.random_source.snapshot() == original_random_state
 
 
-def test_revision_conflict_skips_domain_rng_and_persistence() -> None:
-    state = GameState(revision=4, counter=10)
+def test_revision_conflict_does_not_advance_time_rng_or_persistence() -> None:
+    state = GameState(revision=4, elapsed_days=10)
     random_source = XorShift64StarRandom.from_seed(23)
     original_random_state = random_source.snapshot()
     repository = RecordingRepository()
@@ -148,10 +159,7 @@ def test_revision_conflict_skips_domain_rng_and_persistence() -> None:
         XorShift64StarRandom
     ].from_initial(state, random_source, repository, engine)
 
-    result = session.submit(
-        ConsumeRandomCounter(minimum=1, maximum=3),
-        expected_revision=3,
-    )
+    result = session.submit(AdvanceTime(days=2), expected_revision=3)
 
     assert result == RevisionConflict(expected_revision=3, actual_revision=4)
     assert engine.calls == 0
@@ -160,8 +168,8 @@ def test_revision_conflict_skips_domain_rng_and_persistence() -> None:
     assert session.fork_random_source().snapshot() == original_random_state
 
 
-def test_domain_rejection_discards_random_use_and_skips_persistence() -> None:
-    state = GameState(revision=0, counter=1)
+def test_domain_rejection_preserves_time_rng_and_skips_persistence() -> None:
+    state = GameState(revision=0, elapsed_days=1)
     random_source = XorShift64StarRandom.from_seed(29)
     original_random_state = random_source.snapshot()
     repository = RecordingRepository()
@@ -170,24 +178,21 @@ def test_domain_rejection_discards_random_use_and_skips_persistence() -> None:
         XorShift64StarRandom
     ].from_initial(state, random_source, repository, engine)
 
-    result = session.submit(
-        ConsumeRandomCounter(minimum=2, maximum=3),
-        expected_revision=0,
-    )
+    result = session.submit(AdvanceTime(days=0), expected_revision=0)
 
-    assert result == CommandRejected(state=state, reason=RejectionReason.INSUFFICIENT_COUNTER)
+    assert result == CommandRejected(state=state, reason=RejectionReason.INVALID_DAY_COUNT)
     assert engine.calls == 1
     assert repository.save_calls == 0
     assert session.state == state
     assert session.fork_random_source().snapshot() == original_random_state
 
 
-def test_atomic_save_failure_preserves_memory_rng_and_previous_disk_save(
+def test_atomic_save_failure_preserves_time_memory_rng_and_previous_disk_save(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
-    old_state = GameState(revision=2, counter=10)
+    old_state = GameState(revision=2, elapsed_days=10)
     old_random = XorShift64StarRandom.from_seed(31)
     repository.save(old_state, old_random)
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
@@ -201,10 +206,7 @@ def test_atomic_save_failure_preserves_memory_rng_and_previous_disk_save(
 
     monkeypatch.setattr(save_repository_module, "_replace_file", fail_replace)
 
-    result = session.submit(
-        ConsumeRandomCounter(minimum=1, maximum=3),
-        expected_revision=2,
-    )
+    result = session.submit(AdvanceTime(days=4), expected_revision=2)
 
     assert isinstance(result, PersistenceFailed)
     assert isinstance(result.error, SaveError)
@@ -218,8 +220,8 @@ def test_atomic_save_failure_preserves_memory_rng_and_previous_disk_save(
     assert loaded.random_source.snapshot() == old_random_state
 
 
-def test_retry_after_save_failure_reproduces_and_commits_the_same_candidate() -> None:
-    state = GameState(revision=0, counter=10)
+def test_retry_after_save_failure_commits_the_same_time_and_rng_candidate() -> None:
+    state = GameState(revision=0, elapsed_days=10)
     repository = RecordingRepository(fail_saves=True)
     session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
         XorShift64StarRandom
@@ -228,7 +230,7 @@ def test_retry_after_save_failure_reproduces_and_commits_the_same_candidate() ->
         XorShift64StarRandom.from_seed(37),
         repository,
     )
-    command = ConsumeRandomCounter(minimum=1, maximum=3)
+    command = AdvanceTime(days=3)
     official_random_state = session.fork_random_source().snapshot()
 
     first_result = session.submit(command, expected_revision=0)
@@ -244,8 +246,10 @@ def test_retry_after_save_failure_reproduces_and_commits_the_same_candidate() ->
 
     assert isinstance(retry_result, CommitSucceeded)
     assert retry_result.state == first_candidate.state == retry_candidate.state
+    assert retry_result.state == GameState(revision=1, elapsed_days=13)
     assert (
         first_candidate.random_source.snapshot()
         == retry_candidate.random_source.snapshot()
         == session.fork_random_source().snapshot()
+        == official_random_state
     )

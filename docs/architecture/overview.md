@@ -25,7 +25,12 @@ Browser frontend
   - local presentation state
 ```
 
-This is a target direction. P1 implements the engineering shell and connectivity smoke test. P2 adds the pure headless domain kernel. TASK-002 begins P3 with versioned snapshot persistence and a recoverable deterministic random source. TASK-003 adds only the headless persistent-session commit boundary; HTTP integration, replay, content, and gameplay remain deferred.
+This is the target direction. P1 implements the engineering shell and connectivity smoke test. P2
+adds the pure headless domain kernel. TASK-002 begins P3 with versioned snapshot persistence and a
+recoverable deterministic random source. TASK-003 adds the headless persistent-session commit
+boundary. TASK-004 begins a separate P4 slice with published read-only-document compilation only;
+TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. Runtime content
+loading, HTTP integration, replay, other content contracts, and all other gameplay remain deferred.
 
 ## Authority boundary
 
@@ -86,10 +91,29 @@ concrete deterministic RNG    -> domain RandomSource protocol
 domain                        -X-> infrastructure
 ```
 
-The `buxianxian-save` v1 snapshot contains a complete authoritative `GameState` plus an explicitly
+The `buxianxian-save` v2 snapshot contains a complete authoritative `GameState` plus an explicitly
 identified and versioned random state. Loading dispatches on the save schema version. Events are not
-persisted or replayed. See `ADR-004-versioned-snapshot-save-and-xorshift64star.md` for the format,
-compatibility, and atomic-write decisions.
+persisted or replayed. Experimental counter-based schema v1 is explicitly unsupported rather than
+fictionally migrated. See ADR-004 for snapshot/RNG/atomic-write decisions and ADR-006 for the formal
+state shape, schema v2, and pre-alpha compatibility policy.
+
+## Current authoritative time boundary
+
+The complete current formal state is:
+
+```text
+GameState
+├─ revision: non-negative integer
+└─ elapsed_days: non-negative integer since game start
+```
+
+`AdvanceTime(days)` is validated and handled only in the pure domain. Success creates an independent
+state, increments revision once, and emits `TimeAdvanced(previous, current, elapsed)`. Rejection
+returns the unchanged input state. Time does not consume RNG, but the application session still
+forks and saves the candidate RNG with the candidate state before committing official memory.
+
+Elapsed days are the authority. Years, months, hours, seasons, named eras, age, lifespan, schedules,
+and world reactions are neither stored nor inferred in TASK-005.
 
 ## Current application commit boundary
 
@@ -121,6 +145,31 @@ This is transaction-like only within one process and one session. It does not pr
 multi-process coordination, database transactions, event persistence, or replay. The application
 session is not connected to FastAPI or the frontend.
 
+## Current published-content boundary
+
+TASK-004 treats author source, generated runtime content, and mutable player saves as independent
+versioned data categories:
+
+```text
+authoring/published/documents/*.md
+        |
+        | restricted frontmatter + Markdown, explicit source root
+        v
+infrastructure content validator/compiler
+        |
+        | deterministic UTF-8 JSON, atomic replacement
+        v
+runtime-content/buxianxian-content.json
+```
+
+Only the explicit publication root is scanned. Private/draft siblings and an entire Obsidian Vault
+are never implicit inputs. Package v1 contains sorted `read_only_document` entries with an explicit
+stable ID, display title, and Markdown body; it contains no source paths or author metadata.
+
+The compiler is an infrastructure/authoring tool and does not import the domain, application
+session, save adapter, API, or frontend. No runtime layer loads the package yet. See
+`ADR-005-versioned-published-read-only-content.md` for format and compatibility decisions.
+
 ## Planned frontend boundaries
 
 ```text
@@ -147,13 +196,13 @@ No category should silently serve as another.
 
 ## Deferred decisions
 
-Do not decide these during bootstrap:
+Decisions still deferred:
 
-- final game-state model;
+- additional player/world state beyond revision and elapsed days;
 - replay-log and event-persistence format;
-- concrete migration policy after a real older save exists;
-- content schema;
-- content compiler implementation;
+- concrete migration tooling for released save versions;
+- additional content schemas and cross-entry reference validation;
+- runtime content loading and read-model integration;
 - database choice;
 - desktop wrapper;
 - distribution format;

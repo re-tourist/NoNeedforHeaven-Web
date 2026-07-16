@@ -1,6 +1,6 @@
 # 不羡仙（Buxianxian）
 
-“不羡仙”是一款计划长期开发的独立本地文字游戏。当前仓库已完成**工程基线、无界面确定性领域内核、版本化存档和持久化会话提交边界**；尚未实现可玩功能或叙事。
+“不羡仙”是一款计划长期开发的独立本地文字游戏。当前仓库已完成**工程基线、无界面确定性领域内核、版本化存档、持久化会话提交边界、只读文档内容编译基础，以及第一个正式机制——权威游戏时间**；尚未形成可玩循环或叙事。
 
 ## 架构边界
 
@@ -9,7 +9,11 @@
 - Obsidian 仅是作者工作环境，不是运行时依赖。
 - 作者源文件、未来的编译后内容、存档、展示模型和日志属于不同数据类别。
 
-当前 HTTP 和浏览器层仍只有工程用途的 `GET /api/health` 接口及连接状态页面。Python 后端另有一个不接入 API 的纯领域内核、版本化 JSON 存档与可恢复随机源适配器，以及负责 revision 检查和“保存后提交”的无界面应用会话。它们目前仅使用中性合成状态验证工程契约。
+当前 HTTP 和浏览器层仍只有工程用途的 `GET /api/health` 接口及连接状态页面。Python 后端拥有不接入 API 的纯领域内核、版本化 JSON 存档与可恢复随机源适配器，以及负责 revision 检查和“保存后提交”的无界面应用会话。正式 `GameState` 当前只包含 revision 和从开局累计的非负整数天数；时间推进是唯一正式 Command。
+
+TASK-004 另建立了独立的作者工具链：仅从仓库内 `authoring/published/documents/`
+读取受限 Frontmatter Markdown，验证后确定性地生成版本化 `buxianxian-content` JSON 包。
+它不接入领域状态、存档、API 或前端，也不扫描私人 Obsidian Vault。
 
 ## 环境要求
 
@@ -71,6 +75,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run pyright
 uv run pytest
+uv run python -m buxianxian.infrastructure.content validate
 ```
 
 前端：
@@ -87,6 +92,18 @@ npm run build
 
 需要自动修复格式时，分别运行 `uv run ruff format .` 和 `npm run format`。GitHub Actions 在 Ubuntu、Python 3.14 和 Node.js 24 上执行相同的必要检查。
 
+## 只读文档内容
+
+发布源、格式边界和最小示例见 `authoring/README.md`。从 `backend/` 验证或编译：
+
+```text
+uv run python -m buxianxian.infrastructure.content validate
+uv run python -m buxianxian.infrastructure.content compile
+```
+
+默认输出为 `runtime-content/buxianxian-content.json`，它是可重复生成的本地构建产物，
+不会提交到 Git。当前仓库不包含正式游戏文档。
+
 ## 项目导航
 
 新贡献者应依次阅读：
@@ -102,7 +119,7 @@ npm run build
 ```text
 backend/    Python 运行时工程
 frontend/   原生 TypeScript 浏览器工程
-authoring/  未来作者工作区的边界说明（不参与运行）
+authoring/  作者源边界与明确发布的只读文档目录（不参与运行）
 docs/       产品、架构、ADR、路线图、任务与执行计划
 ```
 
@@ -113,6 +130,7 @@ docs/       产品、架构、ADR、路线图、任务与执行计划
 - 工程仓库名：`NoNeedforHeaven-Web`
 - Python 包名：`buxianxian`
 - 存档格式标识：`buxianxian-save`
+- 运行时内容格式标识：`buxianxian-content`
 - 环境变量前缀：`BUXIANXIAN_`
 
 “文明online”不得作为产品名、代码名、存档名或界面文案进入仓库。

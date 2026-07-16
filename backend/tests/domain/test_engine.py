@@ -1,136 +1,112 @@
-"""Behavioral contracts for the pure deterministic domain engine."""
-
-from dataclasses import dataclass
+"""Behavioral contracts for authoritative deterministic game time."""
 
 import pytest
 
 from buxianxian.domain import (
+    MAX_ADVANCE_DAYS,
+    MAX_ELAPSED_DAYS,
     Accepted,
-    ConsumeCounter,
-    ConsumeRandomCounter,
-    CounterConsumed,
+    AdvanceTime,
     DomainEngine,
     GameState,
     Rejected,
     RejectionReason,
+    TimeAdvanced,
 )
 
 
 class NeverRandomSource:
-    """Fail if a command unexpectedly asks for random input."""
+    """Fail if deterministic time advancement unexpectedly asks for randomness."""
 
     def integer_inclusive(self, minimum: int, maximum: int, /) -> int:
         raise AssertionError(f"unexpected random request: [{minimum}, {maximum}]")
 
 
-@dataclass(frozen=True, slots=True)
-class FixedRandomSource:
-    """Return one controlled value after checking the requested bounds."""
-
-    value: int
-
-    def integer_inclusive(self, minimum: int, maximum: int, /) -> int:
-        assert minimum <= self.value <= maximum
-        return self.value
-
-
-class OutOfRangeRandomSource:
-    """Deliberately violate the RandomSource protocol for a contract test."""
-
-    def integer_inclusive(self, minimum: int, maximum: int, /) -> int:
-        return maximum + 1
-
-
 ENGINE = DomainEngine()
 
 
-def test_valid_command_returns_independent_state_and_fact_event() -> None:
-    state = GameState(revision=0, counter=5)
+def test_minimal_initial_state_represents_game_start_at_day_zero() -> None:
+    state = GameState(revision=0, elapsed_days=0)
 
-    result = ENGINE.transition(state, ConsumeCounter(amount=2), NeverRandomSource())
+    assert state.revision == 0
+    assert state.elapsed_days == 0
+
+
+def test_valid_time_command_returns_independent_state_and_complete_fact_event() -> None:
+    state = GameState(revision=0, elapsed_days=5)
+
+    result = ENGINE.transition(state, AdvanceTime(days=2), NeverRandomSource())
+
+    assert result == Accepted(
+        state=GameState(revision=1, elapsed_days=7),
+        events=(
+            TimeAdvanced(
+                previous_elapsed_days=5,
+                current_elapsed_days=7,
+                days_elapsed=2,
+            ),
+        ),
+    )
+    assert result.state is not state
+    assert state == GameState(revision=0, elapsed_days=5)
+
+
+def test_advancing_many_days_increments_revision_exactly_once() -> None:
+    state = GameState(revision=8, elapsed_days=20)
+
+    result = ENGINE.transition(state, AdvanceTime(days=30), NeverRandomSource())
 
     assert isinstance(result, Accepted)
-    assert result.state == GameState(revision=1, counter=3)
-    assert result.state is not state
-    assert result.events == (CounterConsumed(amount=2),)
-    assert state == GameState(revision=0, counter=5)
+    assert result.state == GameState(revision=9, elapsed_days=50)
 
 
-def test_insufficient_counter_returns_structured_rejection_without_mutation() -> None:
-    state = GameState(revision=0, counter=5)
+@pytest.mark.parametrize("days", [0, -1, True])
+def test_invalid_day_count_is_structurally_rejected_without_mutation(days: int) -> None:
+    state = GameState(revision=3, elapsed_days=11)
 
-    result = ENGINE.transition(state, ConsumeCounter(amount=10), NeverRandomSource())
+    result = ENGINE.transition(state, AdvanceTime(days=days), NeverRandomSource())
 
-    assert isinstance(result, Rejected)
-    assert result == Rejected(state=state, reason=RejectionReason.INSUFFICIENT_COUNTER)
+    assert result == Rejected(state=state, reason=RejectionReason.INVALID_DAY_COUNT)
     assert result.state is state
-    assert result.state.revision == 0
-    assert result.state.counter == 5
+    assert state == GameState(revision=3, elapsed_days=11)
 
 
-def test_non_positive_amount_is_an_expected_rejection() -> None:
-    state = GameState(revision=3, counter=5)
-
-    result = ENGINE.transition(state, ConsumeCounter(amount=0), NeverRandomSource())
-
-    assert result == Rejected(state=state, reason=RejectionReason.INVALID_AMOUNT)
-    assert state == GameState(revision=3, counter=5)
-
-
-def test_invalid_random_range_is_rejected_before_requesting_random_input() -> None:
-    state = GameState(revision=0, counter=5)
+def test_single_command_above_reasonable_limit_is_rejected() -> None:
+    state = GameState(revision=0, elapsed_days=0)
 
     result = ENGINE.transition(
         state,
-        ConsumeRandomCounter(minimum=3, maximum=2),
+        AdvanceTime(days=MAX_ADVANCE_DAYS + 1),
         NeverRandomSource(),
     )
 
-    assert result == Rejected(state=state, reason=RejectionReason.INVALID_RANDOM_RANGE)
+    assert result == Rejected(state=state, reason=RejectionReason.DAY_COUNT_OUT_OF_RANGE)
 
 
-def test_identical_random_input_produces_identical_transition_result() -> None:
-    state = GameState(revision=0, counter=5)
-    command = ConsumeRandomCounter(minimum=1, maximum=3)
+def test_total_elapsed_days_overflow_is_rejected_without_revision_change() -> None:
+    state = GameState(revision=12, elapsed_days=MAX_ELAPSED_DAYS)
 
-    first = ENGINE.transition(state, command, FixedRandomSource(value=2))
-    second = ENGINE.transition(state, command, FixedRandomSource(value=2))
+    result = ENGINE.transition(state, AdvanceTime(days=1), NeverRandomSource())
 
-    expected = Accepted(
-        state=GameState(revision=1, counter=3),
-        events=(CounterConsumed(amount=2),),
-    )
-    assert first == second == expected
-    assert state == GameState(revision=0, counter=5)
+    assert result == Rejected(state=state, reason=RejectionReason.DAY_COUNT_OUT_OF_RANGE)
+    assert state == GameState(revision=12, elapsed_days=MAX_ELAPSED_DAYS)
 
 
-def test_different_controlled_random_inputs_produce_expected_different_results() -> None:
-    state = GameState(revision=0, counter=5)
-    command = ConsumeRandomCounter(minimum=1, maximum=3)
+def test_identical_state_and_command_produce_identical_results_without_rng_use() -> None:
+    state = GameState(revision=4, elapsed_days=100)
+    command = AdvanceTime(days=7)
 
-    low = ENGINE.transition(state, command, FixedRandomSource(value=1))
-    high = ENGINE.transition(state, command, FixedRandomSource(value=3))
+    first = ENGINE.transition(state, command, NeverRandomSource())
+    second = ENGINE.transition(state, command, NeverRandomSource())
 
-    assert low == Accepted(
-        state=GameState(revision=1, counter=4),
-        events=(CounterConsumed(amount=1),),
-    )
-    assert high == Accepted(
-        state=GameState(revision=1, counter=2),
-        events=(CounterConsumed(amount=3),),
-    )
-    assert low != high
-    assert state == GameState(revision=0, counter=5)
+    assert first == second
+    assert state == GameState(revision=4, elapsed_days=100)
 
 
-def test_broken_random_source_is_a_contract_error_and_cannot_mutate_state() -> None:
-    state = GameState(revision=0, counter=5)
-
-    with pytest.raises(ValueError, match="outside the requested bounds"):
-        ENGINE.transition(
-            state,
-            ConsumeRandomCounter(minimum=1, maximum=3),
-            OutOfRangeRandomSource(),
-        )
-
-    assert state == GameState(revision=0, counter=5)
+@pytest.mark.parametrize(
+    ("revision", "elapsed_days"),
+    [(-1, 0), (True, 0), (0, -1), (0, True), (0, MAX_ELAPSED_DAYS + 1)],
+)
+def test_invalid_authoritative_state_is_rejected(revision: int, elapsed_days: int) -> None:
+    with pytest.raises(ValueError):
+        GameState(revision=revision, elapsed_days=elapsed_days)

@@ -45,6 +45,7 @@ authoring/drafts/
 # Local runtime data and generated artifacts
 /saves/
 /runtime-data/
+/runtime-content/
 /artifacts/
 *.buxianxian-save
 *.save.json

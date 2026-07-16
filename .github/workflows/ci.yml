@@ -43,6 +43,9 @@ jobs:
       - name: Test
         run: uv run pytest
 
+      - name: Validate published content
+        run: uv run python -m buxianxian.infrastructure.content validate
+
   frontend:
     name: Frontend quality
     runs-on: ubuntu-latest

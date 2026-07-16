@@ -3,14 +3,15 @@
 from typing import assert_never
 
 from buxianxian.domain.model import (
+    MAX_ADVANCE_DAYS,
+    MAX_ELAPSED_DAYS,
     Accepted,
+    AdvanceTime,
     Command,
-    ConsumeCounter,
-    ConsumeRandomCounter,
-    CounterConsumed,
     GameState,
     Rejected,
     RejectionReason,
+    TimeAdvanced,
     TransitionResult,
 )
 from buxianxian.domain.random_source import RandomSource
@@ -28,44 +29,32 @@ class DomainEngine:
         """Apply one command atomically to an immutable input state."""
 
         match command:
-            case ConsumeCounter():
-                return _handle_consume_counter(state, command)
-            case ConsumeRandomCounter():
-                return _handle_consume_random_counter(state, command, random_source)
+            case AdvanceTime():
+                return _handle_advance_time(state, command)
 
         assert_never(command)
 
 
-def _handle_consume_counter(state: GameState, command: ConsumeCounter) -> TransitionResult:
-    return _consume(state, command.amount)
+def _handle_advance_time(state: GameState, command: AdvanceTime) -> TransitionResult:
+    if type(command.days) is not int or command.days <= 0:
+        return Rejected(state=state, reason=RejectionReason.INVALID_DAY_COUNT)
+    if command.days > MAX_ADVANCE_DAYS:
+        return Rejected(state=state, reason=RejectionReason.DAY_COUNT_OUT_OF_RANGE)
+    if state.elapsed_days > MAX_ELAPSED_DAYS - command.days:
+        return Rejected(state=state, reason=RejectionReason.DAY_COUNT_OUT_OF_RANGE)
 
-
-def _handle_consume_random_counter(
-    state: GameState,
-    command: ConsumeRandomCounter,
-    random_source: RandomSource,
-) -> TransitionResult:
-    if command.minimum <= 0 or command.maximum < command.minimum:
-        return Rejected(state=state, reason=RejectionReason.INVALID_RANDOM_RANGE)
-
-    amount = random_source.integer_inclusive(command.minimum, command.maximum)
-    if not command.minimum <= amount <= command.maximum:
-        raise ValueError("random source returned a value outside the requested bounds")
-
-    return _consume(state, amount)
-
-
-def _consume(state: GameState, amount: int) -> TransitionResult:
-    if amount <= 0:
-        return Rejected(state=state, reason=RejectionReason.INVALID_AMOUNT)
-    if amount > state.counter:
-        return Rejected(state=state, reason=RejectionReason.INSUFFICIENT_COUNTER)
-
+    current_elapsed_days = state.elapsed_days + command.days
     new_state = GameState(
         revision=state.revision + 1,
-        counter=state.counter - amount,
+        elapsed_days=current_elapsed_days,
     )
     return Accepted(
         state=new_state,
-        events=(CounterConsumed(amount=amount),),
+        events=(
+            TimeAdvanced(
+                previous_elapsed_days=state.elapsed_days,
+                current_elapsed_days=current_elapsed_days,
+                days_elapsed=command.days,
+            ),
+        ),
     )

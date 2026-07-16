@@ -135,6 +135,9 @@ Candidate capabilities, implemented one at a time:
 
 Each capability requires its own specification and tests. No named story content is required.
 
+TASK-005 implements only the authoritative elapsed-day time item as an explicitly approved
+foundational slice. It does not complete P7 or pull forward any other candidate capability.
+
 ## P8 — Authoring tools
 
 Deliverables may include:
