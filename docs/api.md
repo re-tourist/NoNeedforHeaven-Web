@@ -58,6 +58,27 @@ The API constructs the existing typed `AdvanceTime` command and delegates to the
 session. Success returns the complete new state. Revision conflict returns HTTP 409 plus the current
 server state; the client refreshes and does not blindly retry.
 
+### `POST /api/game/cultivation/seek-wheel`
+
+Request:
+
+```json
+{
+  "max_days": 7,
+  "expected_revision": 0
+}
+```
+
+The API creates the typed `SeekWheel` command and delegates to the same persistent session.
+`max_days` must be an integer from 1 through 30. Success returns the complete state, including
+cultivation stage, insight, status, and the server-owned suspected-sighting threshold, plus one
+aggregate result with requested/actual days, prior/current insight, ordinary/inspiration gain,
+milestone status, and prior/current elapsed days.
+
+Revision conflict returns HTTP 409 with current state. Domain rejection (invalid days or already
+suspected sighting) returns HTTP 422. Persistence failure returns HTTP 503 and never reports the
+candidate result as committed.
+
 ## Error envelope
 
 Expected failures use:
@@ -81,7 +102,7 @@ Current machine codes:
 - `draft_not_found`, `draft_creation_failed`;
 - `invalid_name`, `invalid_aptitude_selection`, `invalid_trait_selection`;
 - `save_overwrite_required`;
-- `revision_conflict`, `time_command_rejected`;
+- `revision_conflict`, `time_command_rejected`, `cultivation_command_rejected`;
 - `persistence_failed`.
 
 Responses never contain a local path, RNG state, internal exception type, or traceback.
@@ -90,4 +111,3 @@ Responses never contain a local path, RNG state, internal exception type, or tra
 
 The runtime supports one process, one session, one in-memory draft, and one configured save. Do not
 run multiple Uvicorn workers against the same save. Drafts disappear after backend restart.
-

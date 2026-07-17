@@ -24,6 +24,7 @@ from buxianxian.domain import (
     CharacterCreationCandidates,
     CharacterCreationErrorCode,
     GameState,
+    SeekWheel,
     TraitDefinition,
 )
 
@@ -268,3 +269,17 @@ class SingleGameRuntime[RandomT: TransactionalRandomSource]:
         if self._session is None:
             return NoActiveSession()
         return self._session.submit(AdvanceTime(days=days), expected_revision)
+
+    def seek_wheel(
+        self,
+        max_days: int,
+        expected_revision: int,
+    ) -> RuntimeCommandResult:
+        """Submit one atomic wheel-seeking cultivation action."""
+
+        if self._session is None:
+            return NoActiveSession()
+        return self._session.submit(
+            SeekWheel(max_days=max_days),
+            expected_revision,
+        )

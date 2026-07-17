@@ -1,6 +1,7 @@
 """Strict HTTP request, response, read-model, and error contracts."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +25,7 @@ class ApiErrorCode(StrEnum):
     SAVE_OVERWRITE_REQUIRED = "save_overwrite_required"
     REVISION_CONFLICT = "revision_conflict"
     TIME_COMMAND_REJECTED = "time_command_rejected"
+    CULTIVATION_COMMAND_REJECTED = "cultivation_command_rejected"
     PERSISTENCE_FAILED = "persistence_failed"
 
 
@@ -78,6 +80,17 @@ class PlayerResponse(BaseModel):
     traits: tuple[TraitResponse, ...]
 
 
+class CultivationStateResponse(BaseModel):
+    """Browser-facing cultivation state plus server-owned progress threshold."""
+
+    model_config = STRICT_MODEL
+
+    stage: Literal["seeking_wheel"]
+    wheel_insight: int
+    wheel_status: Literal["seeking", "suspected_sighting"]
+    suspected_sighting_threshold: int
+
+
 class GameStateResponse(BaseModel):
     """Browser-facing authoritative state without persistence or RNG details."""
 
@@ -86,6 +99,7 @@ class GameStateResponse(BaseModel):
     revision: int
     elapsed_days: int
     player: PlayerResponse
+    cultivation: CultivationStateResponse
 
 
 class GameStatusResponse(BaseModel):
@@ -141,12 +155,46 @@ class WaitRequest(BaseModel):
     expected_revision: int
 
 
+class SeekWheelRequest(BaseModel):
+    """Typed cultivation intent against an expected authoritative revision."""
+
+    model_config = STRICT_MODEL
+
+    max_days: int
+    expected_revision: int
+
+
+class CultivationResultResponse(BaseModel):
+    """Summary of one committed wheel-seeking action."""
+
+    model_config = STRICT_MODEL
+
+    requested_max_days: int
+    actual_days_elapsed: int
+    previous_insight: int
+    current_insight: int
+    ordinary_insight_gained: int
+    inspiration_insight_gained: int
+    reached_suspected_sighting: bool
+    previous_elapsed_days: int
+    current_elapsed_days: int
+
+
 class StateEnvelope(BaseModel):
     """Successful state-changing or load response."""
 
     model_config = STRICT_MODEL
 
     state: GameStateResponse
+
+
+class CultivationEnvelope(BaseModel):
+    """Successful cultivation response with authoritative state and action summary."""
+
+    model_config = STRICT_MODEL
+
+    state: GameStateResponse
+    cultivation_result: CultivationResultResponse
 
 
 class ApiErrorResponse(BaseModel):

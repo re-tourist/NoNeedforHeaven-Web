@@ -14,16 +14,21 @@ from buxianxian.application import (
     RevisionConflict,
 )
 from buxianxian.domain import (
+    WHEEL_SUSPECTED_SIGHTING_THRESHOLD,
     AdvanceTime,
     Command,
+    CultivationStage,
+    CultivationState,
     DomainEngine,
     GameState,
     InnateAptitudes,
     PlayerCharacter,
     RandomSource,
     RejectionReason,
+    SeekWheel,
     TimeAdvanced,
     TransitionResult,
+    WheelSeekingStatus,
 )
 from buxianxian.infrastructure import (
     JsonFileSaveRepository,
@@ -40,8 +45,21 @@ TEST_PLAYER = PlayerCharacter(
 )
 
 
-def _state(revision: int, elapsed_days: int) -> GameState:
-    return GameState(revision=revision, elapsed_days=elapsed_days, player=TEST_PLAYER)
+def _state(revision: int, elapsed_days: int, insight: int = 0) -> GameState:
+    return GameState(
+        revision=revision,
+        elapsed_days=elapsed_days,
+        player=TEST_PLAYER,
+        cultivation=CultivationState(
+            stage=CultivationStage.SEEKING_WHEEL,
+            wheel_insight=insight,
+            wheel_status=(
+                WheelSeekingStatus.SUSPECTED_SIGHTING
+                if insight == WHEEL_SUSPECTED_SIGHTING_THRESHOLD
+                else WheelSeekingStatus.SEEKING
+            ),
+        ),
+    )
 
 
 class CountingDomainEngine(DomainEngine):
@@ -111,7 +129,7 @@ def test_session_can_start_from_explicit_formal_state_and_rng_without_saving() -
     assert session.fork_random_source().snapshot() == random_source.snapshot()
 
 
-def test_session_can_start_from_existing_schema_v3_save(tmp_path: Path) -> None:
+def test_session_can_start_from_existing_schema_v4_save(tmp_path: Path) -> None:
     repository = JsonFileSaveRepository(tmp_path / "save.json")
     state = _state(revision=5, elapsed_days=13)
     random_source = XorShift64StarRandom.from_seed(0x1234)
@@ -264,4 +282,73 @@ def test_retry_after_save_failure_commits_the_same_time_and_rng_candidate() -> N
         == retry_candidate.random_source.snapshot()
         == session.fork_random_source().snapshot()
         == official_random_state
+    )
+
+
+def test_cultivation_conflict_and_rejection_do_not_advance_rng_or_save() -> None:
+    random_source = XorShift64StarRandom.from_seed(41)
+    repository = RecordingRepository()
+    engine = CountingDomainEngine()
+    state = _state(revision=3, elapsed_days=12)
+    session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
+        XorShift64StarRandom
+    ].from_initial(state, random_source, repository, engine)
+    original_random_state = session.fork_random_source().snapshot()
+
+    conflict = session.submit(SeekWheel(max_days=7), expected_revision=2)
+
+    assert conflict == RevisionConflict(expected_revision=2, actual_revision=3)
+    assert engine.calls == 0
+    assert repository.save_calls == 0
+    assert session.state == state
+    assert session.fork_random_source().snapshot() == original_random_state
+
+    suspected_state = _state(revision=3, elapsed_days=12, insight=100)
+    suspected_session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
+        XorShift64StarRandom
+    ].from_initial(suspected_state, random_source, repository, engine)
+    rejected = suspected_session.submit(SeekWheel(max_days=7), expected_revision=3)
+
+    assert rejected == CommandRejected(
+        state=suspected_state,
+        reason=RejectionReason.WHEEL_ALREADY_SUSPECTED,
+    )
+    assert repository.save_calls == 0
+    assert suspected_session.state == suspected_state
+    assert suspected_session.fork_random_source().snapshot() == original_random_state
+
+
+def test_cultivation_save_failure_preserves_official_state_rng_and_retries_candidate() -> None:
+    state = _state(revision=0, elapsed_days=0)
+    repository = RecordingRepository(fail_saves=True)
+    session: PersistentGameSession[XorShift64StarRandom] = PersistentGameSession[
+        XorShift64StarRandom
+    ].from_initial(
+        state,
+        XorShift64StarRandom.from_seed(43),
+        repository,
+    )
+    command = SeekWheel(max_days=7)
+    official_random_state = session.fork_random_source().snapshot()
+
+    failed = session.submit(command, expected_revision=0)
+    first_candidate = repository.attempts[0]
+
+    assert isinstance(failed, PersistenceFailed)
+    assert session.state == state
+    assert session.fork_random_source().snapshot() == official_random_state
+    assert first_candidate.state.elapsed_days == 7
+    assert first_candidate.state.cultivation.wheel_insight > 0
+    assert first_candidate.random_source.snapshot() != official_random_state
+
+    repository.fail_saves = False
+    retried = session.submit(command, expected_revision=0)
+    second_candidate = repository.attempts[1]
+
+    assert isinstance(retried, CommitSucceeded)
+    assert retried.state == first_candidate.state == second_candidate.state
+    assert (
+        first_candidate.random_source.snapshot()
+        == second_candidate.random_source.snapshot()
+        == session.fork_random_source().snapshot()
     )

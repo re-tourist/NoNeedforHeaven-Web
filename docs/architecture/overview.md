@@ -32,8 +32,8 @@ boundary. TASK-004 begins a separate P4 slice with published read-only-document 
 TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. TASK-006 adds
 deterministic pre-session character creation and a complete player-bearing state.
 TASK-007 connects those bounded capabilities through one single-save application runtime, FastAPI
-DTOs, and a vanilla TypeScript client. Runtime content loading, replay, and all other gameplay remain
-deferred.
+DTOs, and a vanilla TypeScript client. TASK-008 adds the first atomic cultivation/time/RNG vertical
+slice. Runtime content loading, replay, and all other gameplay remain deferred.
 
 ## Authority boundary
 
@@ -94,11 +94,11 @@ concrete deterministic RNG    -> domain RandomSource protocol
 domain                        -X-> infrastructure
 ```
 
-The `buxianxian-save` v3 snapshot contains a complete authoritative `GameState` plus an explicitly
+The `buxianxian-save` v4 snapshot contains a complete authoritative `GameState` plus an explicitly
 identified and versioned random state. Loading dispatches on the save schema version. Events are not
-persisted or replayed. Experimental schemas v1 and v2 are explicitly unsupported rather than
+persisted or replayed. Experimental schemas v1 through v3 are explicitly unsupported rather than
 fictionally migrated. See ADR-004 for snapshot/RNG/atomic-write decisions, ADR-006 for authoritative
-time and compatibility policy, and ADR-007 for player state and schema v3.
+time and compatibility policy, ADR-007 for player state, and ADR-009 for cultivation/schema v4.
 
 ## Current authoritative time boundary
 
@@ -108,10 +108,14 @@ The complete current formal state is:
 GameState
 ├─ revision: non-negative integer
 ├─ elapsed_days: non-negative integer since game start
-└─ player: PlayerCharacter
+├─ player: PlayerCharacter
    ├─ name: normalized Unicode string
    ├─ aptitudes: five integers, each 1–10, total 25
    └─ trait_ids: two distinct stable IDs in canonical order
+└─ cultivation: CultivationState
+   ├─ stage: seeking_wheel
+   ├─ wheel_insight: integer 0–100
+   └─ wheel_status: seeking | suspected_sighting
 ```
 
 `AdvanceTime(days)` is validated and handled only in the pure domain. Success creates an independent
@@ -121,6 +125,22 @@ forks and saves the candidate RNG with the candidate state before committing off
 
 Elapsed days are the authority. Years, months, hours, seasons, named eras, age, lifespan, schedules,
 and world reactions are neither stored nor inferred in TASK-005.
+
+## Current cultivation boundary
+
+`SeekWheel(max_days)` accepts 1 through 30 and settles actual days sequentially. Every actual day
+uses exactly two controlled integer RNG calls in a fixed order. The centralized pre-alpha rule uses
+comprehension, spiritual sense, temperament, and fortune; constitution and prototype traits have no
+current effect.
+
+One accepted command atomically changes insight, elapsed days, suspected-sighting status, revision,
+and RNG position and emits one aggregate event. It stops immediately when insight reaches the
+server-owned threshold of 100. A seven-day command and seven one-day commands therefore reach the
+same time/insight/status/RNG position until early stop, aside from revision count and event grouping.
+
+The browser receives a projection of state, threshold, and aggregate result. It does not reproduce
+the formula. Suspected sighting is only the entry to the later breath/pain/dream trials; those trials
+and every later stage are absent. See ADR-009.
 
 ## Current new-game boundary
 
@@ -243,8 +263,7 @@ session, save adapter, API, or frontend. No runtime layer loads the package yet.
 ```text
 frontend/src/
 ├─ api/             # HTTP client and transport types
-├─ api/             # HTTP client, unknown-JSON validation, transport types
-├─ app.ts           # pure boot/start/creation/overview controller
+├─ app.ts           # pure boot/start/creation/overview/cultivation controller
 ├─ main.ts          # DOM projection and event wiring
 └─ style.css        # responsive prototype presentation
 ```
@@ -269,7 +288,8 @@ No category should silently serve as another.
 
 Decisions still deferred:
 
-- additional player/world state beyond the current identity, aptitudes, trait IDs, and time;
+- additional player/world state beyond identity, aptitudes, trait IDs, time, and seeking progress;
+- sighting trials, later cultivation stages, resources, injuries, and trait effects;
 - replay-log and event-persistence format;
 - concrete migration tooling for released save versions;
 - additional content schemas and cross-entry reference validation;

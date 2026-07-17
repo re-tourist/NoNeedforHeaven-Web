@@ -10,9 +10,11 @@ import {
   ApiClientError,
   type CharacterDraft,
   type ConfirmNewGameInput,
+  type CultivationResponse,
   type GameApi,
   type GameStateView,
   type GameStatus,
+  type SeekWheelInput,
   type WaitInput,
 } from "./api/game";
 
@@ -41,12 +43,43 @@ const INITIAL_GAME: GameStateView = {
       },
     ],
   },
+  cultivation: {
+    stage: "seeking_wheel",
+    wheel_insight: 0,
+    wheel_status: "seeking",
+    suspected_sighting_threshold: 100,
+  },
 };
 
 const WAITED_GAME: GameStateView = {
   ...INITIAL_GAME,
   revision: 1,
   elapsed_days: 3,
+};
+
+const CULTIVATED_GAME: GameStateView = {
+  ...INITIAL_GAME,
+  revision: 1,
+  elapsed_days: 7,
+  cultivation: {
+    ...INITIAL_GAME.cultivation,
+    wheel_insight: 34,
+  },
+};
+
+const CULTIVATION_RESPONSE: CultivationResponse = {
+  state: CULTIVATED_GAME,
+  cultivation_result: {
+    requested_max_days: 7,
+    actual_days_elapsed: 7,
+    previous_insight: 0,
+    current_insight: 34,
+    ordinary_insight_gained: 29,
+    inspiration_insight_gained: 5,
+    reached_suspected_sighting: false,
+    previous_elapsed_days: 0,
+    current_elapsed_days: 7,
+  },
 };
 
 function draft(id: string): CharacterDraft {
@@ -85,16 +118,21 @@ class FakeGameApi implements GameApi {
   confirmResult: GameStateView = INITIAL_GAME;
   loadResult: GameStateView = INITIAL_GAME;
   waitResult: GameStateView = WAITED_GAME;
+  seekResult: CultivationResponse = CULTIVATION_RESPONSE;
   statusError: Error | null = null;
   draftError: Error | null = null;
   confirmError: Error | null = null;
   loadError: Error | null = null;
   waitError: Error | null = null;
+  seekError: Error | null = null;
   confirmPromise: Promise<GameStateView> | null = null;
+  seekPromise: Promise<CultivationResponse> | null = null;
   confirmCalls = 0;
   waitCalls = 0;
+  seekCalls = 0;
   lastConfirmation: ConfirmNewGameInput | null = null;
   lastWait: WaitInput | null = null;
+  lastSeek: SeekWheelInput | null = null;
 
   getStatus(): Promise<GameStatus> {
     if (this.statusError !== null) {
@@ -137,6 +175,15 @@ class FakeGameApi implements GameApi {
       return Promise.reject(this.waitError);
     }
     return Promise.resolve(this.waitResult);
+  }
+
+  async seekWheel(input: SeekWheelInput): Promise<CultivationResponse> {
+    this.seekCalls += 1;
+    this.lastSeek = input;
+    if (this.seekError !== null) {
+      throw this.seekError;
+    }
+    return this.seekPromise ?? this.seekResult;
   }
 }
 
@@ -375,5 +422,134 @@ describe("GameController", () => {
     expect(state.game).toEqual(WAITED_GAME);
     expect(state.error).toBe("状态已刷新。 ");
     expect(api.waitCalls).toBe(1);
+  });
+
+  it("switches between overview and cultivation without changing game state", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    controller.showCultivation();
+    expect(overviewState(controller).page).toBe("cultivation");
+    controller.showOverview();
+    const state = overviewState(controller);
+    expect(state.page).toBe("overview");
+    expect(state.game).toEqual(INITIAL_GAME);
+  });
+
+  it("refreshes time, revision, insight, and summary after cultivation", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    const controller = new GameController(api);
+    await controller.initialize();
+    controller.showCultivation();
+
+    await controller.seekWheel(7);
+
+    const state = overviewState(controller);
+    expect(state.page).toBe("cultivation");
+    expect(state.game).toEqual(CULTIVATED_GAME);
+    expect(state.lastCultivation).toEqual(
+      CULTIVATION_RESPONSE.cultivation_result,
+    );
+    expect(api.lastSeek).toEqual({ max_days: 7, expected_revision: 0 });
+  });
+
+  it("prevents duplicate cultivation while one request is pending", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    const pending = new Deferred<CultivationResponse>();
+    api.seekPromise = pending.promise;
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    const first = controller.seekWheel(1);
+    const second = controller.seekWheel(1);
+
+    expect(api.seekCalls).toBe(1);
+    expect(overviewState(controller).busy).toBe(true);
+    pending.resolve(CULTIVATION_RESPONSE);
+    await Promise.all([first, second]);
+    expect(overviewState(controller).busy).toBe(false);
+  });
+
+  it("adopts authoritative cultivation state after a revision conflict", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    api.seekError = new ApiClientError(
+      "revision_conflict",
+      "状态已刷新。",
+      CULTIVATED_GAME,
+    );
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    await controller.seekWheel(7);
+
+    const state = overviewState(controller);
+    expect(state.page).toBe("cultivation");
+    expect(state.game).toEqual(CULTIVATED_GAME);
+    expect(state.error).toBe("状态已刷新。");
+    expect(api.seekCalls).toBe(1);
+  });
+
+  it("recovers from cultivation errors without leaving a busy page", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    api.seekError = new ApiClientError(
+      "cultivation_command_rejected",
+      "已经达到疑见，不能继续寻轮。",
+      INITIAL_GAME,
+    );
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    await controller.seekWheel(1);
+
+    const state = overviewState(controller);
+    expect(state.page).toBe("cultivation");
+    expect(state.busy).toBe(false);
+    expect(state.error).toBe("已经达到疑见，不能继续寻轮。");
+  });
+
+  it("disables further cultivation after suspected sighting", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: {
+        ...CULTIVATED_GAME,
+        cultivation: {
+          ...CULTIVATED_GAME.cultivation,
+          wheel_insight: 100,
+          wheel_status: "suspected_sighting",
+        },
+      },
+    };
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    expect(controller.canSeekWheel()).toBe(false);
   });
 });

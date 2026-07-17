@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from buxianxian.domain.cultivation import CultivationState
 from buxianxian.domain.model import (
     TRAIT_SELECTION_COUNT,
     GameState,
@@ -179,6 +180,7 @@ def confirm_character_creation(
             revision=0,
             elapsed_days=0,
             player=player,
+            cultivation=CultivationState.initial(),
         )
     )
 

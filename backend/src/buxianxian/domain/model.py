@@ -2,8 +2,14 @@
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+
+from buxianxian.domain.cultivation import (
+    CultivationState,
+    SeekWheel,
+    WheelSeekingCompleted,
+)
 
 MAX_ADVANCE_DAYS = 1_000_000
 MAX_ELAPSED_DAYS = (1 << 63) - 1
@@ -73,6 +79,7 @@ class GameState:
     revision: int
     elapsed_days: int
     player: PlayerCharacter
+    cultivation: CultivationState = field(default_factory=CultivationState.initial)
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -85,6 +92,8 @@ class GameState:
             raise ValueError("elapsed_days must be a non-negative signed 64-bit integer")
         if not _is_instance_of(self.player, PlayerCharacter):
             raise ValueError("player must be a complete PlayerCharacter value")
+        if not _is_instance_of(self.cultivation, CultivationState):
+            raise ValueError("cultivation must be a complete CultivationState value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +103,7 @@ class AdvanceTime:
     days: int
 
 
-type Command = AdvanceTime
+type Command = AdvanceTime | SeekWheel
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +115,7 @@ class TimeAdvanced:
     days_elapsed: int
 
 
-type DomainEvent = TimeAdvanced
+type DomainEvent = TimeAdvanced | WheelSeekingCompleted
 
 
 class RejectionReason(StrEnum):
@@ -114,6 +123,9 @@ class RejectionReason(StrEnum):
 
     INVALID_DAY_COUNT = "invalid_day_count"
     DAY_COUNT_OUT_OF_RANGE = "day_count_out_of_range"
+    INVALID_SEEK_WHEEL_DAY_COUNT = "invalid_seek_wheel_day_count"
+    SEEK_WHEEL_DAY_COUNT_OUT_OF_RANGE = "seek_wheel_day_count_out_of_range"
+    WHEEL_ALREADY_SUSPECTED = "wheel_already_suspected"
 
 
 @dataclass(frozen=True, slots=True)

@@ -99,6 +99,36 @@ input:focus-visible {
   font-size: 1.6rem;
 }
 
+.game-nav {
+  display: flex;
+  gap: 0.45rem;
+  margin: -0.45rem 0 1.5rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid #ddd2c2;
+}
+
+.game-nav__item {
+  min-height: 2.55rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: #6d5c49;
+  background: transparent;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.game-nav__item--active {
+  border-color: #ad987f;
+  color: #493523;
+  background: #f4e8d5;
+}
+
+.game-nav__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .subheading {
   margin: 1.75rem 0 0.8rem;
   font-size: 1.08rem;
@@ -289,6 +319,74 @@ input:focus-visible {
 
 .wait-form .field__label {
   width: 100%;
+}
+
+.notice--subtle {
+  margin-top: 0.8rem;
+  color: #6b6257;
+  background: #f4f0e9;
+  font-size: 0.88rem;
+}
+
+.cultivation-method {
+  margin: -0.55rem 0 1.25rem;
+  color: #68533d;
+  font-family: "Noto Serif SC", STSong, serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.progress-label {
+  display: block;
+  margin: 1.5rem 0 0.45rem;
+  color: #524438;
+  font-weight: 700;
+}
+
+.cultivation-progress {
+  width: 100%;
+  height: 1.1rem;
+  overflow: hidden;
+  accent-color: #76502d;
+}
+
+.cultivation-copy {
+  margin: 1rem 0 0;
+  color: #665b50;
+  line-height: 1.7;
+}
+
+.cultivation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.4rem;
+}
+
+.cultivation-result {
+  margin-top: 1.5rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d4c5b2;
+  border-radius: 0.65rem;
+  background: #faf6ef;
+}
+
+.cultivation-result p {
+  margin: 0.45rem 0 0;
+  line-height: 1.6;
+}
+
+.cultivation-result__title {
+  margin-top: 0;
+}
+
+.cultivation-result__milestone {
+  color: #704827;
+  font-weight: 800;
+}
+
+.cultivation-next-step {
+  margin-top: 1rem;
 }
 
 .error,

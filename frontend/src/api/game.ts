@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | "save_overwrite_required"
   | "revision_conflict"
   | "time_command_rejected"
+  | "cultivation_command_rejected"
   | "persistence_failed";
 
 export type ClientErrorCode =
@@ -42,6 +43,14 @@ export interface GameStateView {
   readonly revision: number;
   readonly elapsed_days: number;
   readonly player: PlayerSummary;
+  readonly cultivation: CultivationStateView;
+}
+
+export interface CultivationStateView {
+  readonly stage: "seeking_wheel";
+  readonly wheel_insight: number;
+  readonly wheel_status: "seeking" | "suspected_sighting";
+  readonly suspected_sighting_threshold: number;
 }
 
 export interface ApiErrorDetail {
@@ -82,12 +91,35 @@ export interface WaitInput {
   readonly expected_revision: number;
 }
 
+export interface SeekWheelInput {
+  readonly max_days: number;
+  readonly expected_revision: number;
+}
+
+export interface CultivationResultView {
+  readonly requested_max_days: number;
+  readonly actual_days_elapsed: number;
+  readonly previous_insight: number;
+  readonly current_insight: number;
+  readonly ordinary_insight_gained: number;
+  readonly inspiration_insight_gained: number;
+  readonly reached_suspected_sighting: boolean;
+  readonly previous_elapsed_days: number;
+  readonly current_elapsed_days: number;
+}
+
+export interface CultivationResponse {
+  readonly state: GameStateView;
+  readonly cultivation_result: CultivationResultView;
+}
+
 export interface GameApi {
   getStatus(): Promise<GameStatus>;
   createDraft(): Promise<CharacterDraft>;
   confirmNewGame(input: ConfirmNewGameInput): Promise<GameStateView>;
   loadGame(): Promise<GameStateView>;
   wait(input: WaitInput): Promise<GameStateView>;
+  seekWheel(input: SeekWheelInput): Promise<CultivationResponse>;
 }
 
 export class ApiClientError extends Error {
@@ -143,6 +175,15 @@ export class HttpGameApi implements GameApi {
       body: JSON.stringify(input),
     });
     return parseStateEnvelope(payload);
+  }
+
+  async seekWheel(input: SeekWheelInput): Promise<CultivationResponse> {
+    return parseCultivationEnvelope(
+      await this.#request("/api/game/cultivation/seek-wheel", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
   }
 
   async #request(path: string, init: RequestInit): Promise<unknown> {
@@ -216,6 +257,7 @@ function isApiErrorCode(value: unknown): value is ApiErrorCode {
       "save_overwrite_required",
       "revision_conflict",
       "time_command_rejected",
+      "cultivation_command_rejected",
       "persistence_failed",
     ].includes(value)
   );
@@ -276,6 +318,26 @@ function parseGameState(value: unknown): GameStateView {
       aptitudes: parseAptitudes(value.player.aptitudes),
       traits: value.player.traits.map(parseTrait),
     },
+    cultivation: parseCultivationState(value.cultivation),
+  };
+}
+
+function parseCultivationState(value: unknown): CultivationStateView {
+  if (
+    !isRecord(value) ||
+    value.stage !== "seeking_wheel" ||
+    !isNumber(value.wheel_insight) ||
+    (value.wheel_status !== "seeking" &&
+      value.wheel_status !== "suspected_sighting") ||
+    !isNumber(value.suspected_sighting_threshold)
+  ) {
+    throw invalidResponse();
+  }
+  return {
+    stage: value.stage,
+    wheel_insight: value.wheel_insight,
+    wheel_status: value.wheel_status,
+    suspected_sighting_threshold: value.suspected_sighting_threshold,
   };
 }
 
@@ -339,6 +401,44 @@ function parseStateEnvelope(value: unknown): GameStateView {
     throw invalidResponse();
   }
   return parseGameState(value.state);
+}
+
+function parseCultivationEnvelope(value: unknown): CultivationResponse {
+  if (!isRecord(value)) {
+    throw invalidResponse();
+  }
+  return {
+    state: parseGameState(value.state),
+    cultivation_result: parseCultivationResult(value.cultivation_result),
+  };
+}
+
+function parseCultivationResult(value: unknown): CultivationResultView {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.requested_max_days) ||
+    !isNumber(value.actual_days_elapsed) ||
+    !isNumber(value.previous_insight) ||
+    !isNumber(value.current_insight) ||
+    !isNumber(value.ordinary_insight_gained) ||
+    !isNumber(value.inspiration_insight_gained) ||
+    typeof value.reached_suspected_sighting !== "boolean" ||
+    !isNumber(value.previous_elapsed_days) ||
+    !isNumber(value.current_elapsed_days)
+  ) {
+    throw invalidResponse();
+  }
+  return {
+    requested_max_days: value.requested_max_days,
+    actual_days_elapsed: value.actual_days_elapsed,
+    previous_insight: value.previous_insight,
+    current_insight: value.current_insight,
+    ordinary_insight_gained: value.ordinary_insight_gained,
+    inspiration_insight_gained: value.inspiration_insight_gained,
+    reached_suspected_sighting: value.reached_suspected_sighting,
+    previous_elapsed_days: value.previous_elapsed_days,
+    current_elapsed_days: value.current_elapsed_days,
+  };
 }
 
 function parseErrorEnvelope(value: unknown): {

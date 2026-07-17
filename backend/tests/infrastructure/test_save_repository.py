@@ -9,10 +9,13 @@ import buxianxian.infrastructure.save_repository as save_repository_module
 from buxianxian.domain import (
     Accepted,
     AdvanceTime,
+    CultivationStage,
+    CultivationState,
     DomainEngine,
     GameState,
     InnateAptitudes,
     PlayerCharacter,
+    WheelSeekingStatus,
 )
 from buxianxian.infrastructure import (
     CURRENT_SCHEMA_VERSION,
@@ -30,8 +33,21 @@ TEST_PLAYER = PlayerCharacter(
 )
 
 
-def _state(revision: int, elapsed_days: int) -> GameState:
-    return GameState(revision=revision, elapsed_days=elapsed_days, player=TEST_PLAYER)
+def _state(revision: int, elapsed_days: int, insight: int = 0) -> GameState:
+    return GameState(
+        revision=revision,
+        elapsed_days=elapsed_days,
+        player=TEST_PLAYER,
+        cultivation=CultivationState(
+            stage=CultivationStage.SEEKING_WHEEL,
+            wheel_insight=insight,
+            wheel_status=(
+                WheelSeekingStatus.SUSPECTED_SIGHTING
+                if insight == 100
+                else WheelSeekingStatus.SEEKING
+            ),
+        ),
+    )
 
 
 def _player_payload() -> dict[str, object]:
@@ -48,6 +64,14 @@ def _player_payload() -> dict[str, object]:
     }
 
 
+def _cultivation_payload() -> dict[str, object]:
+    return {
+        "stage": "seeking_wheel",
+        "wheel_insight": 0,
+        "wheel_status": "seeking",
+    }
+
+
 def _valid_payload() -> dict[str, object]:
     return {
         "format": SAVE_FORMAT,
@@ -56,6 +80,7 @@ def _valid_payload() -> dict[str, object]:
             "revision": 2,
             "elapsed_days": 7,
             "player": _player_payload(),
+            "cultivation": _cultivation_payload(),
         },
         "random": {
             "algorithm": "xorshift64star",
@@ -78,7 +103,7 @@ def _assert_load_error(repository: JsonFileSaveRepository, code: SaveErrorCode) 
 def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path: Path) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    state = _state(revision=4, elapsed_days=11)
+    state = _state(revision=4, elapsed_days=11, insight=42)
     random_source = XorShift64StarRandom.from_seed(0xCAFE_BABE)
     random_source.integer_inclusive(1, 10)
     expected_random_state = random_source.snapshot()
@@ -90,10 +115,15 @@ def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path
     assert loaded.random_source.snapshot() == expected_random_state
     decoded: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert decoded["format"] == "buxianxian-save"
-    assert decoded["schema_version"] == 3
+    assert decoded["schema_version"] == 4
     assert decoded["state"] == {
         "elapsed_days": 11,
         "player": _player_payload(),
+        "cultivation": {
+            "stage": "seeking_wheel",
+            "wheel_insight": 42,
+            "wheel_status": "seeking",
+        },
         "revision": 4,
     }
 
@@ -185,6 +215,14 @@ def test_wrong_product_is_rejected(tmp_path: Path) -> None:
     [
         (1, {"revision": 2, "counter": 7}),
         (2, {"revision": 2, "elapsed_days": 7}),
+        (
+            3,
+            {
+                "revision": 2,
+                "elapsed_days": 7,
+                "player": _player_payload(),
+            },
+        ),
     ],
 )
 def test_pre_alpha_schema_without_player_is_explicitly_unsupported(
@@ -219,9 +257,24 @@ def test_unknown_schema_version_is_rejected_before_guessing(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     "invalid_state",
     [
-        {"revision": -1, "elapsed_days": 7, "player": _player_payload()},
-        {"revision": 1, "elapsed_days": -1, "player": _player_payload()},
-        {"revision": 1, "elapsed_days": True, "player": _player_payload()},
+        {
+            "revision": -1,
+            "elapsed_days": 7,
+            "player": _player_payload(),
+            "cultivation": _cultivation_payload(),
+        },
+        {
+            "revision": 1,
+            "elapsed_days": -1,
+            "player": _player_payload(),
+            "cultivation": _cultivation_payload(),
+        },
+        {
+            "revision": 1,
+            "elapsed_days": True,
+            "player": _player_payload(),
+            "cultivation": _cultivation_payload(),
+        },
         {"revision": 1, "elapsed_days": 7},
     ],
 )
@@ -267,6 +320,49 @@ def test_invalid_player_profile_is_rejected(
         "revision": 0,
         "elapsed_days": 0,
         "player": invalid_player,
+        "cultivation": _cultivation_payload(),
+    }
+    _write_payload(path, payload)
+
+    _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
+
+
+@pytest.mark.parametrize(
+    "invalid_cultivation",
+    [
+        {
+            "stage": "unsupported",
+            "wheel_insight": 0,
+            "wheel_status": "seeking",
+        },
+        {
+            "stage": "seeking_wheel",
+            "wheel_insight": -1,
+            "wheel_status": "seeking",
+        },
+        {
+            "stage": "seeking_wheel",
+            "wheel_insight": 99,
+            "wheel_status": "suspected_sighting",
+        },
+        {
+            "stage": "seeking_wheel",
+            "wheel_insight": 100,
+            "wheel_status": "seeking",
+        },
+    ],
+)
+def test_invalid_cultivation_state_is_rejected(
+    tmp_path: Path,
+    invalid_cultivation: dict[str, object],
+) -> None:
+    path = tmp_path / "save.json"
+    payload = _valid_payload()
+    payload["state"] = {
+        "revision": 0,
+        "elapsed_days": 0,
+        "player": _player_payload(),
+        "cultivation": invalid_cultivation,
     }
     _write_payload(path, payload)
 

@@ -1,14 +1,15 @@
 # 不羡仙 backend
 
 This package contains the local authoritative Python runtime. The API retains the TASK-000 health
-check and now exposes the bounded TASK-007 single-save game routes. Transport DTOs project existing
-application/domain contracts; routes do not reimplement rules.
+check and exposes the bounded single-save game and TASK-008 cultivation routes. Transport DTOs
+project existing application/domain contracts; routes do not reimplement rules.
 
-`buxianxian.infrastructure` implements the `buxianxian-save` JSON v3 file adapter and the versioned
-`xorshift64star` random source. Schema v3 stores the complete player, revision, authoritative elapsed
-days, and RNG state; experimental schemas v1/v2 are explicitly unsupported. Persistence depends on
-the domain contract; the domain does not depend on persistence, JSON, Pydantic, or the filesystem.
-Tests use pytest temporary directories and do not create player saves in the repository.
+`buxianxian.infrastructure` implements the `buxianxian-save` JSON v4 file adapter and the versioned
+`xorshift64star` random source. Schema v4 stores the complete player, revision, authoritative elapsed
+days, cultivation state, and RNG state; experimental schemas v1-v3 are explicitly unsupported.
+Persistence depends on the domain contract; the domain does not depend on persistence, JSON,
+Pydantic, or the filesystem. Tests use pytest temporary directories and do not create player saves
+in the repository.
 
 `buxianxian.application` implements the TASK-003 headless persistent session. A caller supplies an expected state revision; the session evaluates a command with a forked candidate RNG, saves accepted candidate state/RNG, and changes its official in-memory values only after the save succeeds. Conflict, domain rejection, and persistence failure are distinct result types. Application ports keep the session independent of FastAPI and the concrete JSON adapter.
 
@@ -28,9 +29,10 @@ explicit published Markdown directory, supports the restricted `read_only_docume
 and atomically writes a deterministic `buxianxian-content` JSON v1 package. It has no domain,
 application-session, save, FastAPI, frontend, Obsidian, or private-vault dependency.
 
-TASK-005 defines the first formal mechanism: a bounded `AdvanceTime` command with a `TimeAdvanced`
-event. TASK-006 extends the complete formal state to `GameState(revision, elapsed_days, player)`
-without changing the time command. It does not define a calendar, age, lifespan, daily simulation,
-or any other gameplay system. The session and new-game service are not exposed through an API or UI.
+TASK-005 defines bounded authoritative time. TASK-006 adds the complete player. TASK-008 adds
+immutable cultivation state and `SeekWheel(max_days)`. Every actual seeking day consumes exactly
+two controlled RNG calls; one accepted command atomically commits insight, actual elapsed days,
+status, one revision, one summary event, and the resulting RNG position. The rule ends at suspected
+sighting and does not implement the three trials or a later cultivation stage.
 
 See the repository root `README.md` for setup, development, and verification commands.

@@ -1,6 +1,7 @@
 import {
   ApiClientError,
   type CharacterDraft,
+  type CultivationResultView,
   type GameApi,
   type GameStateView,
 } from "./api/game";
@@ -32,7 +33,9 @@ export interface CreatingState {
 
 export interface OverviewState {
   readonly kind: "overview";
+  readonly page: "overview" | "cultivation";
   readonly game: GameStateView;
+  readonly lastCultivation: CultivationResultView | null;
   readonly busy: boolean;
   readonly error: string | null;
 }
@@ -67,7 +70,9 @@ export class GameController {
       if (status.session_active && status.state !== null) {
         this.#setState({
           kind: "overview",
+          page: "overview",
           game: status.state,
+          lastCultivation: null,
           busy: false,
           error: status.error?.message ?? null,
         });
@@ -123,7 +128,7 @@ export class GameController {
     this.#setState({ ...current, busy: true, error: null });
     try {
       const game = await this.#api.loadGame();
-      this.#setState({ kind: "overview", game, busy: false, error: null });
+      this.#setState(overviewState(game));
     } catch (error: unknown) {
       this.#setState({ ...current, busy: false, error: errorMessage(error) });
     }
@@ -216,7 +221,7 @@ export class GameController {
         trait_ids: current.traitIds,
         overwrite_existing_save: current.overwriteConfirmed,
       });
-      this.#setState({ kind: "overview", game, busy: false, error: null });
+      this.#setState(overviewState(game));
     } catch (error: unknown) {
       this.#setState({ ...current, busy: false, error: errorMessage(error) });
     }
@@ -237,11 +242,80 @@ export class GameController {
         days,
         expected_revision: current.game.revision,
       });
-      this.#setState({ kind: "overview", game, busy: false, error: null });
+      this.#setState({
+        ...current,
+        game,
+        busy: false,
+        error: null,
+      });
     } catch (error: unknown) {
       const refreshed = error instanceof ApiClientError ? error.state : null;
       this.#setState({
         ...current,
+        game: refreshed ?? current.game,
+        busy: false,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  showOverview(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({ ...this.#state, page: "overview", error: null });
+    }
+  }
+
+  showCultivation(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({ ...this.#state, page: "cultivation", error: null });
+    }
+  }
+
+  canSeekWheel(): boolean {
+    return (
+      this.#state.kind === "overview" &&
+      !this.#state.busy &&
+      this.#state.game.cultivation.wheel_status === "seeking"
+    );
+  }
+
+  async seekWheel(maxDays: number): Promise<void> {
+    const current = this.#state;
+    if (current.kind !== "overview" || current.busy) {
+      return;
+    }
+    if (!Number.isInteger(maxDays) || maxDays < 1 || maxDays > 30) {
+      this.#setState({
+        ...current,
+        page: "cultivation",
+        error: "寻轮天数必须是 1 至 30 的整数。",
+      });
+      return;
+    }
+    this.#setState({
+      ...current,
+      page: "cultivation",
+      busy: true,
+      error: null,
+    });
+    try {
+      const response = await this.#api.seekWheel({
+        max_days: maxDays,
+        expected_revision: current.game.revision,
+      });
+      this.#setState({
+        kind: "overview",
+        page: "cultivation",
+        game: response.state,
+        lastCultivation: response.cultivation_result,
+        busy: false,
+        error: null,
+      });
+    } catch (error: unknown) {
+      const refreshed = error instanceof ApiClientError ? error.state : null;
+      this.#setState({
+        ...current,
+        page: "cultivation",
         game: refreshed ?? current.game,
         busy: false,
         error: errorMessage(error),
@@ -255,6 +329,17 @@ export class GameController {
       listener();
     }
   }
+}
+
+function overviewState(game: GameStateView): OverviewState {
+  return {
+    kind: "overview",
+    page: "overview",
+    game,
+    lastCultivation: null,
+    busy: false,
+    error: null,
+  };
 }
 
 function errorMessage(error: unknown): string {

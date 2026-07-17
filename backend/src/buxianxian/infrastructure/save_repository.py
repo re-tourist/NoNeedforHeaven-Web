@@ -10,14 +10,21 @@ from json import JSONDecodeError
 from pathlib import Path
 
 from buxianxian.application.ports import PersistenceError
-from buxianxian.domain import GameState, InnateAptitudes, PlayerCharacter
+from buxianxian.domain import (
+    CultivationStage,
+    CultivationState,
+    GameState,
+    InnateAptitudes,
+    PlayerCharacter,
+    WheelSeekingStatus,
+)
 from buxianxian.infrastructure.random_source import (
     RandomStateSnapshot,
     XorShift64StarRandom,
 )
 
 SAVE_FORMAT = "buxianxian-save"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -73,7 +80,7 @@ class JsonFileSaveRepository:
     def save(self, state: GameState, random_source: XorShift64StarRandom) -> None:
         """Serialize completely, then atomically replace the configured save."""
 
-        payload = _encode_v3(state, random_source.snapshot())
+        payload = _encode_v4(state, random_source.snapshot())
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(self.path, serialized)
 
@@ -109,7 +116,7 @@ class JsonFileSaveRepository:
         return loader(payload)
 
 
-def _encode_v3(
+def _encode_v4(
     state: GameState,
     random_state: RandomStateSnapshot,
 ) -> dict[str, JsonValue]:
@@ -130,6 +137,11 @@ def _encode_v3(
                 },
                 "trait_ids": list(state.player.trait_ids),
             },
+            "cultivation": {
+                "stage": state.cultivation.stage.value,
+                "wheel_insight": state.cultivation.wheel_insight,
+                "wheel_status": state.cultivation.wheel_status.value,
+            },
         },
         "random": {
             "algorithm": random_state.algorithm,
@@ -139,7 +151,7 @@ def _encode_v3(
     }
 
 
-def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
+def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
     _require_exact_fields(
         payload,
         frozenset({"format", "schema_version", "state", "random"}),
@@ -150,7 +162,7 @@ def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
     state_payload = _required_object(payload, "state", SaveErrorCode.INVALID_DATA)
     _require_exact_fields(
         state_payload,
-        frozenset({"revision", "elapsed_days", "player"}),
+        frozenset({"revision", "elapsed_days", "player", "cultivation"}),
         SaveErrorCode.INVALID_DATA,
         "domain state",
     )
@@ -214,6 +226,33 @@ def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
             raise SaveError(SaveErrorCode.INVALID_DATA, "trait IDs must be strings")
         trait_ids.append(trait_id)
 
+    cultivation_payload = _required_object(
+        state_payload,
+        "cultivation",
+        SaveErrorCode.INVALID_DATA,
+    )
+    _require_exact_fields(
+        cultivation_payload,
+        frozenset({"stage", "wheel_insight", "wheel_status"}),
+        SaveErrorCode.INVALID_DATA,
+        "cultivation state",
+    )
+    stage_value = _required_string(
+        cultivation_payload,
+        "stage",
+        SaveErrorCode.INVALID_DATA,
+    )
+    wheel_insight = _required_integer(
+        cultivation_payload,
+        "wheel_insight",
+        SaveErrorCode.INVALID_DATA,
+    )
+    wheel_status_value = _required_string(
+        cultivation_payload,
+        "wheel_status",
+        SaveErrorCode.INVALID_DATA,
+    )
+
     try:
         aptitudes = InnateAptitudes(
             constitution=constitution,
@@ -227,8 +266,18 @@ def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
             aptitudes=aptitudes,
             trait_ids=tuple(trait_ids),
         )
-        state = GameState(revision=revision, elapsed_days=elapsed_days, player=player)
-    except ValueError:
+        cultivation = CultivationState(
+            stage=CultivationStage(stage_value),
+            wheel_insight=wheel_insight,
+            wheel_status=WheelSeekingStatus(wheel_status_value),
+        )
+        state = GameState(
+            revision=revision,
+            elapsed_days=elapsed_days,
+            player=player,
+            cultivation=cultivation,
+        )
+    except TypeError, ValueError:
         raise SaveError(SaveErrorCode.INVALID_DATA, "domain state is invalid") from None
 
     random_payload = _required_object(payload, "random", SaveErrorCode.INVALID_RANDOM_STATE)
@@ -284,7 +333,7 @@ def _load_v3(payload: dict[str, JsonValue]) -> LoadedSave:
 type _VersionLoader = Callable[[dict[str, JsonValue]], LoadedSave]
 
 _VERSION_LOADERS: dict[int, _VersionLoader] = {
-    CURRENT_SCHEMA_VERSION: _load_v3,
+    CURRENT_SCHEMA_VERSION: _load_v4,
 }
 
 

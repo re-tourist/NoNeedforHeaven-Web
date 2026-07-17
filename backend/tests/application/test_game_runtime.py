@@ -291,3 +291,38 @@ def test_wait_requires_session_then_commits_authoritative_time(tmp_path: Path) -
     assert isinstance(waited, CommitSucceeded)
     assert waited.state.elapsed_days == 3
     assert waited.state.revision == 1
+
+
+def test_seek_wheel_requires_session_then_commits_state_time_and_rng(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    runtime = _runtime(repository, seed=307)
+    assert isinstance(
+        runtime.seek_wheel(max_days=1, expected_revision=0),
+        NoActiveSession,
+    )
+
+    draft = runtime.create_draft()
+    assert isinstance(draft, DraftCreated)
+    option_id, trait_ids = _selection(draft)
+    created = runtime.confirm_new_game(
+        draft.draft_id,
+        "测试者",
+        option_id,
+        trait_ids,
+        overwrite_existing_save=False,
+    )
+    assert isinstance(created, NewGameCreated)
+    before_random = created.session.fork_random_source().snapshot()
+
+    cultivated = runtime.seek_wheel(max_days=7, expected_revision=0)
+
+    assert isinstance(cultivated, CommitSucceeded)
+    assert cultivated.state.elapsed_days == 7
+    assert cultivated.state.revision == 1
+    assert cultivated.state.cultivation.wheel_insight > 0
+    assert created.session.fork_random_source().snapshot() != before_random
+    loaded = repository.load()
+    assert loaded.state == cultivated.state
+    assert loaded.random_source.snapshot() == created.session.fork_random_source().snapshot()

@@ -27,6 +27,12 @@ const STATE_PAYLOAD = {
       },
     ],
   },
+  cultivation: {
+    stage: "seeking_wheel",
+    wheel_insight: 12,
+    wheel_status: "seeking",
+    suspected_sighting_threshold: 100,
+  },
 };
 
 function jsonResponse(payload: object, status = 200): Response {
@@ -97,6 +103,45 @@ describe("HttpGameApi", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/game/wait", {
       method: "POST",
       body: JSON.stringify({ days: 3, expected_revision: 0 }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+  });
+
+  it("submits wheel-seeking intent and validates its action summary", async () => {
+    const cultivationResult = {
+      requested_max_days: 7,
+      actual_days_elapsed: 7,
+      previous_insight: 0,
+      current_insight: 36,
+      ordinary_insight_gained: 31,
+      inspiration_insight_gained: 5,
+      reached_suspected_sighting: false,
+      previous_elapsed_days: 0,
+      current_elapsed_days: 7,
+    };
+    const fetcher = vi.fn((): Promise<Response> =>
+      Promise.resolve(
+        jsonResponse({
+          state: STATE_PAYLOAD,
+          cultivation_result: cultivationResult,
+        }),
+      ),
+    );
+    const api = new HttpGameApi(fetcher);
+
+    const response = await api.seekWheel({
+      max_days: 7,
+      expected_revision: 0,
+    });
+
+    expect(response.state.cultivation.wheel_insight).toBe(12);
+    expect(response.cultivation_result).toEqual(cultivationResult);
+    expect(fetcher).toHaveBeenCalledWith("/api/game/cultivation/seek-wheel", {
+      method: "POST",
+      body: JSON.stringify({ max_days: 7, expected_revision: 0 }),
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",

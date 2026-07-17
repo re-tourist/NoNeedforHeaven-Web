@@ -1,7 +1,12 @@
 import "./style.css";
 
-import { GameController, type AppState, type CreatingState } from "./app";
-import { HttpGameApi, type Aptitudes, type GameStateView } from "./api/game";
+import {
+  GameController,
+  type AppState,
+  type CreatingState,
+  type OverviewState,
+} from "./app";
+import { HttpGameApi, type Aptitudes } from "./api/game";
 
 const root = document.querySelector<HTMLElement>("#app");
 if (root === null) {
@@ -30,7 +35,7 @@ function render(container: HTMLElement, game: GameController): void {
       shell.append(renderCreation(state, game));
       break;
     case "overview":
-      shell.append(renderOverview(state.game, state.busy, state.error, game));
+      shell.append(renderGame(state, game));
       break;
   }
   container.replaceChildren(shell);
@@ -197,38 +202,85 @@ function renderCreation(
   return panel;
 }
 
-function renderOverview(
-  state: GameStateView,
-  busy: boolean,
-  error: string | null,
+function renderGame(state: OverviewState, game: GameController): HTMLElement {
+  const panel = element("section", "panel panel--wide");
+  panel.append(renderGameNavigation(state, game));
+  if (state.error !== null) {
+    panel.append(renderError(state.error));
+  }
+  if (state.page === "cultivation") {
+    panel.append(renderCultivation(state, game));
+  } else {
+    panel.append(renderOverview(state, game));
+  }
+  if (state.busy) {
+    panel.append(element("p", "loading", "正在结算并保存…"));
+  }
+  return panel;
+}
+
+function renderGameNavigation(
+  state: OverviewState,
   game: GameController,
 ): HTMLElement {
-  const panel = element("section", "panel panel--wide");
-  panel.append(element("h2", "section-title", "游戏总览"));
-  if (error !== null) {
-    panel.append(renderError(error));
-  }
+  const navigation = element("nav", "game-nav");
+  navigation.setAttribute("aria-label", "游戏内页面");
+  const overview = button(
+    "总览",
+    `game-nav__item${state.page === "overview" ? " game-nav__item--active" : ""}`,
+  );
+  overview.setAttribute(
+    "aria-current",
+    state.page === "overview" ? "page" : "false",
+  );
+  overview.disabled = state.busy;
+  overview.addEventListener("click", () => {
+    game.showOverview();
+  });
+  const cultivation = button(
+    "修炼",
+    `game-nav__item${state.page === "cultivation" ? " game-nav__item--active" : ""}`,
+  );
+  cultivation.setAttribute(
+    "aria-current",
+    state.page === "cultivation" ? "page" : "false",
+  );
+  cultivation.disabled = state.busy;
+  cultivation.addEventListener("click", () => {
+    game.showCultivation();
+  });
+  navigation.append(overview, cultivation);
+  return navigation;
+}
+
+function renderOverview(
+  state: OverviewState,
+  game: GameController,
+): DocumentFragment {
+  const content = document.createDocumentFragment();
+  const gameState = state.game;
+  content.append(element("h2", "section-title", "游戏总览"));
   const summary = element("div", "summary-grid");
   summary.append(
-    summaryCard("角色", state.player.name),
-    summaryCard("累计游戏时间", `第 ${String(state.elapsed_days)} 天`),
-    summaryCard("状态修订", String(state.revision)),
+    summaryCard("角色", gameState.player.name),
+    summaryCard("累计游戏时间", `第 ${String(gameState.elapsed_days)} 天`),
+    summaryCard("状态修订", String(gameState.revision)),
   );
-  panel.append(summary);
+  content.append(summary);
 
-  panel.append(element("h3", "subheading", "先天禀赋"));
+  content.append(element("h3", "subheading", "先天禀赋"));
   const aptitudeList = element("dl", "aptitudes");
-  for (const [label, value] of aptitudeEntries(state.player.aptitudes)) {
+  for (const [label, value] of aptitudeEntries(gameState.player.aptitudes)) {
     aptitudeList.append(
       element("dt", "", label),
       element("dd", "", String(value)),
     );
   }
-  panel.append(aptitudeList);
+  content.append(aptitudeList);
 
-  panel.append(element("h3", "subheading", "已选原型词条"));
+  content.append(element("h3", "subheading", "已选原型词条"));
   const traits = element("div", "choice-grid choice-grid--traits");
-  for (const trait of state.player.traits) {
+  for (const trait of gameState.player.traits) {
     const card = element("article", "choice-card choice-card--trait");
     card.append(
       element("strong", "choice-card__title", trait.name),
@@ -236,7 +288,14 @@ function renderOverview(
     );
     traits.append(card);
   }
-  panel.append(traits);
+  content.append(
+    traits,
+    element(
+      "p",
+      "notice notice--subtle",
+      "词条效果尚未接入当前 pre-alpha 修炼规则。",
+    ),
+  );
 
   const waitForm = element("form", "wait-form");
   const waitLabel = element("label", "field__label", "等待天数");
@@ -248,20 +307,115 @@ function renderOverview(
   waitInput.min = "1";
   waitInput.step = "1";
   waitInput.value = "1";
-  waitInput.disabled = busy;
+  waitInput.disabled = state.busy;
   const waitButton = button("等待", "button button--primary");
   waitButton.type = "submit";
-  waitButton.disabled = busy;
+  waitButton.disabled = state.busy;
   waitForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void game.wait(Number(waitInput.value));
   });
   waitForm.append(waitLabel, waitInput, waitButton);
-  panel.append(waitForm);
-  if (busy) {
-    panel.append(element("p", "loading", "正在结算并保存…"));
+  content.append(waitForm);
+  return content;
+}
+
+function renderCultivation(
+  state: OverviewState,
+  game: GameController,
+): DocumentFragment {
+  const content = document.createDocumentFragment();
+  const cultivation = state.game.cultivation;
+  const suspected = cultivation.wheel_status === "suspected_sighting";
+  content.append(
+    element("h2", "section-title", "修炼"),
+    element("p", "cultivation-method", "当前功法：先天秘境大道（残卷）"),
+  );
+
+  const summary = element("div", "summary-grid");
+  summary.append(
+    summaryCard("当前阶段", "寻轮"),
+    summaryCard("当前状态", suspected ? "疑见生命之轮" : "寻轮中"),
+    summaryCard(
+      "寻轮体悟",
+      `${String(cultivation.wheel_insight)} / ${String(cultivation.suspected_sighting_threshold)}`,
+    ),
+    summaryCard("累计游戏时间", `第 ${String(state.game.elapsed_days)} 天`),
+    summaryCard("状态修订", String(state.game.revision)),
+  );
+  content.append(summary);
+
+  const progressLabel = element(
+    "label",
+    "progress-label",
+    `寻轮体悟 ${String(cultivation.wheel_insight)} / ${String(cultivation.suspected_sighting_threshold)}`,
+  );
+  progressLabel.htmlFor = "wheel-insight-progress";
+  const progress = document.createElement("progress");
+  progress.id = "wheel-insight-progress";
+  progress.className = "cultivation-progress";
+  progress.max = cultivation.suspected_sighting_threshold;
+  progress.value = cultivation.wheel_insight;
+  content.append(progressLabel, progress);
+
+  if (suspected) {
+    content.append(
+      element(
+        "p",
+        "notice cultivation-next-step",
+        "你已疑见生命之轮。后续需要完成“见轮三验”；该阶段尚未实现。",
+      ),
+    );
+  } else {
+    content.append(
+      element(
+        "p",
+        "cultivation-copy",
+        "守静、调息、内照，按日积累体悟。达到疑见时会提前结束本次闭关。",
+      ),
+    );
   }
-  return panel;
+
+  const actions = element("div", "cultivation-actions");
+  for (const days of [1, 7, 30] as const) {
+    const action = button(`寻轮 ${String(days)} 天`, "button button--primary");
+    action.disabled = !game.canSeekWheel();
+    action.addEventListener("click", () => void game.seekWheel(days));
+    actions.append(action);
+  }
+  content.append(actions);
+
+  if (state.lastCultivation !== null) {
+    const result = state.lastCultivation;
+    const resultPanel = element("section", "cultivation-result");
+    resultPanel.append(
+      element("h3", "subheading cultivation-result__title", "最近一次修炼"),
+      element(
+        "p",
+        "",
+        `请求 ${String(result.requested_max_days)} 天，实际经过 ${String(result.actual_days_elapsed)} 天。`,
+      ),
+      element(
+        "p",
+        "",
+        `体悟 ${String(result.previous_insight)} → ${String(result.current_insight)}；普通体悟 +${String(result.ordinary_insight_gained)}，偶发灵光 +${String(result.inspiration_insight_gained)}。`,
+      ),
+    );
+    if (result.reached_suspected_sighting) {
+      resultPanel.append(
+        element("p", "cultivation-result__milestone", "本次修炼达到疑见。"),
+      );
+    }
+    content.append(resultPanel);
+  }
+  content.append(
+    element(
+      "p",
+      "notice notice--subtle",
+      "原型词条效果尚未接入当前 pre-alpha 修炼规则。",
+    ),
+  );
+  return content;
 }
 
 function renderError(message: string): HTMLElement {

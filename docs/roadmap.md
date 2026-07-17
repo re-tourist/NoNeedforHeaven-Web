@@ -146,6 +146,11 @@ TASK-007 delivers a deliberately narrow P5/P6 vertical slice over the approved t
 foundations: single-save new/load/read/wait APIs plus a browser start/creation/overview flow. It does
 not complete the broader planned content/read-model client, replay, or any additional gameplay.
 
+TASK-008 delivers the first bounded P7 gameplay vertical slice: deterministic wheel-seeking
+cultivation, atomically composed with elapsed time, RNG, persistence, one API command, and one
+browser page. It ends at suspected sighting and does not implement the three trials, a completed
+breakthrough, later cultivation stages, trait effects, or another gameplay capability.
+
 ## P8 — Authoring tools
 
 Deliverables may include:

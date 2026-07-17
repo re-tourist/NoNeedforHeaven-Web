@@ -12,15 +12,20 @@ from buxianxian.api.contracts import (
     AptitudesResponse,
     CharacterDraftResponse,
     ConfirmNewGameRequest,
+    CultivationEnvelope,
+    CultivationResultResponse,
+    CultivationStateResponse,
     GameStateResponse,
     GameStatusResponse,
     PlayerResponse,
+    SeekWheelRequest,
     StateEnvelope,
     TraitResponse,
     WaitRequest,
 )
 from buxianxian.application import (
     CommandRejected,
+    CommitSucceeded,
     DraftCreated,
     DraftCreationFailed,
     DraftNotFound,
@@ -35,11 +40,13 @@ from buxianxian.application import (
     SaveOverwriteRequired,
 )
 from buxianxian.domain import (
+    WHEEL_SUSPECTED_SIGHTING_THRESHOLD,
     CharacterCreationErrorCode,
     GameState,
     InnateAptitudes,
     RejectionReason,
     TraitDefinition,
+    WheelSeekingCompleted,
 )
 from buxianxian.infrastructure import SaveError, SaveErrorCode
 
@@ -144,6 +151,40 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
             )
         return StateEnvelope(state=_state_response(result.state, runtime.trait_catalog))
 
+    def seek_wheel(request: SeekWheelRequest) -> CultivationEnvelope | JSONResponse:
+        result = runtime.seek_wheel(request.max_days, request.expected_revision)
+        if isinstance(result, NoActiveSession):
+            return _error_response(
+                status.HTTP_409_CONFLICT,
+                ApiErrorCode.NO_ACTIVE_SESSION,
+                "当前没有活动游戏。请先开始或继续游戏。",
+            )
+        if isinstance(result, RevisionConflict):
+            return _error_response(
+                status.HTTP_409_CONFLICT,
+                ApiErrorCode.REVISION_CONFLICT,
+                "游戏状态已经更新。界面已刷新。请重新确认修炼行动。",
+                state=_active_state(runtime),
+            )
+        if isinstance(result, CommandRejected):
+            return _error_response(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                ApiErrorCode.CULTIVATION_COMMAND_REJECTED,
+                _cultivation_rejection_message(result.reason),
+                state=_state_response(result.state, runtime.trait_catalog),
+            )
+        if isinstance(result, PersistenceFailed):
+            return _error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                ApiErrorCode.PERSISTENCE_FAILED,
+                "游戏状态无法安全保存。本次寻轮没有生效。",
+                state=_state_response(result.state, runtime.trait_catalog),
+            )
+        return CultivationEnvelope(
+            state=_state_response(result.state, runtime.trait_catalog),
+            cultivation_result=_cultivation_result_response(result),
+        )
+
     router.add_api_route(
         "",
         get_game_status,
@@ -193,6 +234,17 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
             503: {"model": ApiErrorResponse},
         },
     )
+    router.add_api_route(
+        "/cultivation/seek-wheel",
+        seek_wheel,
+        methods=["POST"],
+        response_model=CultivationEnvelope,
+        responses={
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+            503: {"model": ApiErrorResponse},
+        },
+    )
 
     return router
 
@@ -234,6 +286,12 @@ def _state_response(
             name=state.player.name,
             aptitudes=_aptitudes_response(state.player.aptitudes),
             traits=traits,
+        ),
+        cultivation=CultivationStateResponse(
+            stage=state.cultivation.stage.value,
+            wheel_insight=state.cultivation.wheel_insight,
+            wheel_status=state.cultivation.wheel_status.value,
+            suspected_sighting_threshold=WHEEL_SUSPECTED_SIGHTING_THRESHOLD,
         ),
     )
 
@@ -313,6 +371,38 @@ def _time_rejection_message(reason: RejectionReason) -> str:
     if reason is RejectionReason.INVALID_DAY_COUNT:
         return "等待天数必须是正整数。"
     return "等待天数超出当前支持的范围。"
+
+
+def _cultivation_rejection_message(reason: RejectionReason) -> str:
+    if reason is RejectionReason.INVALID_SEEK_WHEEL_DAY_COUNT:
+        return "寻轮天数必须是正整数。"
+    if reason is RejectionReason.SEEK_WHEEL_DAY_COUNT_OUT_OF_RANGE:
+        return "每次寻轮最多闭关 30 天。"
+    if reason is RejectionReason.WHEEL_ALREADY_SUSPECTED:
+        return "已经疑见生命之轮。后续需要进行尚未实现的见轮三验。"
+    raise RuntimeError("unexpected cultivation rejection reason")
+
+
+def _cultivation_result_response(
+    result: CommitSucceeded,
+) -> CultivationResultResponse:
+    event = next(
+        (event for event in result.events if isinstance(event, WheelSeekingCompleted)),
+        None,
+    )
+    if event is None:
+        raise RuntimeError("cultivation commit did not contain its summary event")
+    return CultivationResultResponse(
+        requested_max_days=event.requested_max_days,
+        actual_days_elapsed=event.actual_days_elapsed,
+        previous_insight=event.previous_insight,
+        current_insight=event.current_insight,
+        ordinary_insight_gained=event.ordinary_insight_gained,
+        inspiration_insight_gained=event.inspiration_insight_gained,
+        reached_suspected_sighting=event.reached_suspected_sighting,
+        previous_elapsed_days=event.previous_elapsed_days,
+        current_elapsed_days=event.current_elapsed_days,
+    )
 
 
 def _active_state(runtime: ConcreteGameRuntime) -> GameStateResponse | None:

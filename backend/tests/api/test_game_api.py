@@ -2,13 +2,16 @@
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+import buxianxian.infrastructure.save_repository as save_repository_module
 from buxianxian.api.app import create_app
 from buxianxian.api.contracts import (
     ApiErrorCode,
     ApiErrorResponse,
     CharacterDraftResponse,
+    CultivationEnvelope,
     GameStatusResponse,
     StateEnvelope,
 )
@@ -342,3 +345,154 @@ def test_restart_load_restores_player_time_revision_and_rng(tmp_path: Path) -> N
     assert loaded.state.revision == 1
     assert restarted_runtime.active_session is not None
     assert restarted_runtime.active_session.fork_random_source().snapshot() == expected_random
+
+
+def test_seek_wheel_returns_complete_state_summary_and_persists_rng(tmp_path: Path) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    client, runtime = _client(repository, seed=701)
+    draft = _create_draft(client)
+    created = client.post("/api/game/new", json=_confirmation_payload(draft))
+    assert created.status_code == 201
+    assert runtime.active_session is not None
+    before_random = runtime.active_session.fork_random_source().snapshot()
+
+    response = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 7, "expected_revision": 0},
+    )
+    result = CultivationEnvelope.model_validate_json(response.text)
+
+    assert response.status_code == 200
+    assert result.state.elapsed_days == 7
+    assert result.state.revision == 1
+    assert result.state.cultivation.stage == "seeking_wheel"
+    assert result.state.cultivation.wheel_status == "seeking"
+    assert result.state.cultivation.wheel_insight > 0
+    assert result.state.cultivation.suspected_sighting_threshold == 100
+    assert result.cultivation_result.requested_max_days == 7
+    assert result.cultivation_result.actual_days_elapsed == 7
+    assert (
+        result.cultivation_result.ordinary_insight_gained
+        + result.cultivation_result.inspiration_insight_gained
+        == result.state.cultivation.wheel_insight
+    )
+    assert runtime.active_session.fork_random_source().snapshot() != before_random
+    loaded = repository.load()
+    assert loaded.state.revision == result.state.revision
+    assert loaded.state.elapsed_days == result.state.elapsed_days
+    assert loaded.state.cultivation.wheel_insight == result.state.cultivation.wheel_insight
+    assert loaded.random_source.snapshot() == runtime.active_session.fork_random_source().snapshot()
+
+
+def test_seek_wheel_expected_failures_have_stable_codes_and_refresh_state(
+    tmp_path: Path,
+) -> None:
+    client, _ = _client(JsonFileSaveRepository(tmp_path / "save.json"), seed=703)
+    no_session = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 1, "expected_revision": 0},
+    )
+    assert (
+        ApiErrorResponse.model_validate_json(no_session.text).error.code
+        is ApiErrorCode.NO_ACTIVE_SESSION
+    )
+
+    draft = _create_draft(client)
+    client.post("/api/game/new", json=_confirmation_payload(draft))
+    invalid = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 0, "expected_revision": 0},
+    )
+    invalid_error = ApiErrorResponse.model_validate_json(invalid.text)
+    assert invalid.status_code == 422
+    assert invalid_error.error.code is ApiErrorCode.CULTIVATION_COMMAND_REJECTED
+    assert invalid_error.state is not None
+    assert invalid_error.state.revision == 0
+    assert invalid_error.state.elapsed_days == 0
+    assert invalid_error.state.cultivation.wheel_insight == 0
+
+    succeeded = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 1, "expected_revision": 0},
+    )
+    authoritative = CultivationEnvelope.model_validate_json(succeeded.text).state
+    conflict = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 1, "expected_revision": 0},
+    )
+    conflict_error = ApiErrorResponse.model_validate_json(conflict.text)
+    assert conflict.status_code == 409
+    assert conflict_error.error.code is ApiErrorCode.REVISION_CONFLICT
+    assert conflict_error.state == authoritative
+
+
+def test_seek_wheel_save_failure_reports_failure_and_preserves_state_rng_and_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    client, runtime = _client(repository, seed=709)
+    draft = _create_draft(client)
+    client.post("/api/game/new", json=_confirmation_payload(draft))
+    assert runtime.active_session is not None
+    before_state = runtime.active_session.state
+    before_random = runtime.active_session.fork_random_source().snapshot()
+
+    def fail_replace(source: Path, target: Path) -> None:
+        del source, target
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr(save_repository_module, "_replace_file", fail_replace)
+    failed = client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 7, "expected_revision": 0},
+    )
+    error = ApiErrorResponse.model_validate_json(failed.text)
+
+    assert failed.status_code == 503
+    assert error.error.code is ApiErrorCode.PERSISTENCE_FAILED
+    assert error.state is not None
+    assert error.state.revision == before_state.revision
+    assert error.state.elapsed_days == before_state.elapsed_days
+    assert error.state.cultivation.wheel_insight == before_state.cultivation.wheel_insight
+    assert runtime.active_session.state == before_state
+    assert runtime.active_session.fork_random_source().snapshot() == before_random
+    loaded = repository.load()
+    assert loaded.state == before_state
+    assert loaded.random_source.snapshot() == before_random
+
+
+def test_restart_load_restores_cultivation_and_can_continue_rng_sequence(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    first_client, first_runtime = _client(repository, seed=719)
+    draft = _create_draft(first_client)
+    first_client.post("/api/game/new", json=_confirmation_payload(draft))
+    first_result = CultivationEnvelope.model_validate_json(
+        first_client.post(
+            "/api/game/cultivation/seek-wheel",
+            json={"max_days": 7, "expected_revision": 0},
+        ).text
+    )
+    assert first_runtime.active_session is not None
+    persisted_random = first_runtime.active_session.fork_random_source().snapshot()
+
+    restarted_client, restarted_runtime = _client(
+        JsonFileSaveRepository(repository.path),
+        seed=999,
+    )
+    loaded = StateEnvelope.model_validate_json(restarted_client.post("/api/game/load").text)
+    assert loaded.state == first_result.state
+    assert restarted_runtime.active_session is not None
+    assert restarted_runtime.active_session.fork_random_source().snapshot() == persisted_random
+
+    continued_response = restarted_client.post(
+        "/api/game/cultivation/seek-wheel",
+        json={"max_days": 1, "expected_revision": first_result.state.revision},
+    )
+    continued = CultivationEnvelope.model_validate_json(continued_response.text)
+    assert continued_response.status_code == 200
+    assert continued.state.revision == first_result.state.revision + 1
+    assert continued.state.elapsed_days > first_result.state.elapsed_days
+    assert continued.state.cultivation.wheel_insight > first_result.state.cultivation.wheel_insight
