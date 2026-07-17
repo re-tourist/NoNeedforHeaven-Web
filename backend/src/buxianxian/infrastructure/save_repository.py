@@ -62,6 +62,14 @@ class JsonFileSaveRepository:
 
     path: Path
 
+    def exists(self) -> bool:
+        """Return whether the configured single-save path currently exists."""
+
+        try:
+            return self.path.exists()
+        except OSError:
+            raise SaveError(SaveErrorCode.IO_ERROR, "save path could not be inspected") from None
+
     def save(self, state: GameState, random_source: XorShift64StarRandom) -> None:
         """Serialize completely, then atomically replace the configured save."""
 

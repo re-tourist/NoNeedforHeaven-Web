@@ -41,3 +41,30 @@ class SessionRepository[RandomT: TransactionalRandomSource](Protocol):
     def load(self) -> LoadedSession[RandomT]:
         """Load a previously validated state and RNG position."""
         ...
+
+
+class SingleSaveRepository[RandomT: TransactionalRandomSource](
+    SessionRepository[RandomT],
+    Protocol,
+):
+    """Repository port that can inspect one configured save location."""
+
+    def exists(self) -> bool:
+        """Return whether any filesystem entry currently occupies the save location."""
+        ...
+
+
+class TransactionalRandomSourceFactory[RandomT: TransactionalRandomSource](Protocol):
+    """Create a fresh transactional game RNG for a new character draft."""
+
+    def create(self) -> RandomT:
+        """Return a new independent random source."""
+        ...
+
+
+class DraftIdentifierSource(Protocol):
+    """Create opaque non-game identifiers for ephemeral server drafts."""
+
+    def create(self) -> str:
+        """Return a new opaque identifier."""
+        ...

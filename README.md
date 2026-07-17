@@ -1,6 +1,6 @@
 # 不羡仙（Buxianxian）
 
-“不羡仙”是一款计划长期开发的独立本地文字游戏。当前仓库已完成**工程基线、无界面确定性领域内核、版本化存档、持久化会话、只读文档编译、权威游戏时间，以及无界面新游戏/角色创建基础**；尚未形成网页角色创建、可玩循环或叙事。
+“不羡仙”是一款计划长期开发的独立本地文字游戏。当前仓库已完成**工程基线、确定性领域内核、版本化存档、事务会话、只读内容编译、权威游戏时间、角色创建，以及第一条可操作 Web 闭环**。它可以创建并保存角色、重新加载存档、查看状态和等待若干天；尚未实现修炼、物品、地图或叙事。
 
 ## 架构边界
 
@@ -9,7 +9,7 @@
 - Obsidian 仅是作者工作环境，不是运行时依赖。
 - 作者源文件、未来的编译后内容、存档、展示模型和日志属于不同数据类别。
 
-当前 HTTP 和浏览器层仍只有工程用途的 `GET /api/health` 接口及连接状态页面。Python 后端拥有不接入 API 的纯领域内核、版本化 JSON 存档、可恢复随机源、持久化会话和新游戏服务。正式 `GameState` 包含 revision、累计天数和完整玩家资料；角色创建候选在 fork 后的 RNG 上生成，初始状态保存成功后才建立会话。
+当前浏览器通过 FastAPI 调用现有应用服务。服务器持有唯一活动会话和服务端角色草稿；前端只提交姓名、候选 ID、等待天数和预期 revision，并使用服务器返回的完整状态刷新界面。正式 `GameState` 包含 revision、累计天数和完整玩家资料；初始状态或时间转换保存成功后才更新活动会话。
 
 TASK-004 另建立了独立的作者工具链：仅从仓库内 `authoring/published/documents/`
 读取受限 Frontmatter Markdown，验证后确定性地生成版本化 `buxianxian-content` JSON 包。
@@ -53,6 +53,21 @@ uv run uvicorn buxianxian.api.app:app --reload --host 127.0.0.1 --port 8000
 
 可访问 `http://127.0.0.1:8000/api/health` 验证接口。
 
+默认单存档位于仓库根目录的 `runtime-data/buxianxian.save.json`，该目录已被 Git 忽略。
+可在启动后端前设置 `BUXIANXIAN_SAVE_PATH` 覆盖路径，例如 PowerShell：
+
+```text
+$env:BUXIANXIAN_SAVE_PATH = "D:\games\buxianxian\save.json"
+uv run uvicorn buxianxian.api.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+或 bash/zsh：
+
+```text
+BUXIANXIAN_SAVE_PATH="$HOME/.local/share/buxianxian/save.json" \
+  uv run uvicorn buxianxian.api.app:app --reload --host 127.0.0.1 --port 8000
+```
+
 终端二启动前端：
 
 ```text
@@ -62,7 +77,11 @@ npm run dev
 
 打开 Vite 输出的本地地址。开发服务器会把同源 `/api` 请求代理到 `http://127.0.0.1:8000`；代码中没有硬编码生产 API 地址，也不需要启用跨域访问。
 
-后端未启动、网络请求失败或响应合同无效时，页面会显示明确的“后端不可用”状态。
+页面支持开始新游戏、服务端角色草稿、明确覆盖确认、继续游戏、状态总览和等待操作。
+后端未启动、网络请求失败或响应合同无效时，页面保留当前可恢复状态并显示错误。
+角色草稿仅保存在后端内存中，后端重启后需要重新生成。
+
+完整 API 合同见 `docs/api.md`，前端结构见 `frontend/README.md`。
 
 ## 自动验证
 

@@ -1,6 +1,8 @@
 # 不羡仙 backend
 
-This package contains the local Python runtime. The API exposes only the TASK-000 engineering health check. The pure `buxianxian.domain` package implements the TASK-001 headless deterministic transition contract and is intentionally not exposed through HTTP yet.
+This package contains the local authoritative Python runtime. The API retains the TASK-000 health
+check and now exposes the bounded TASK-007 single-save game routes. Transport DTOs project existing
+application/domain contracts; routes do not reimplement rules.
 
 `buxianxian.infrastructure` implements the `buxianxian-save` JSON v3 file adapter and the versioned
 `xorshift64star` random source. Schema v3 stores the complete player, revision, authoritative elapsed
@@ -14,6 +16,12 @@ TASK-006 adds `NewGameService` before that session boundary. It generates a priv
 draft on a forked RNG, revalidates the selected aptitude/name/trait IDs, saves the complete initial
 state plus post-generation RNG, and creates a session only after save success. No formal trait
 catalog or trait effects ship in production code.
+
+TASK-007 adds `SingleGameRuntime`, which owns the one repository, active session, current opaque
+draft, new-game service, prototype trait catalog, and injected production sources. FastAPI composes
+this runtime and maps its typed results to stable DTO/error contracts. The default ignored save is
+`../runtime-data/buxianxian.save.json`; set `BUXIANXIAN_SAVE_PATH` to override it. Drafts are memory
+only and disappear on restart. Do not run multiple workers against the same save.
 
 `buxianxian.infrastructure.content` implements the TASK-004 authoring compiler. It validates only an
 explicit published Markdown directory, supports the restricted `read_only_document` v1 contract,

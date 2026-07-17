@@ -31,7 +31,9 @@ recoverable deterministic random source. TASK-003 adds the headless persistent-s
 boundary. TASK-004 begins a separate P4 slice with published read-only-document compilation only;
 TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. TASK-006 adds
 deterministic pre-session character creation and a complete player-bearing state.
-Runtime content loading, HTTP integration, replay, and all other gameplay remain deferred.
+TASK-007 connects those bounded capabilities through one single-save application runtime, FastAPI
+DTOs, and a vanilla TypeScript client. Runtime content loading, replay, and all other gameplay remain
+deferred.
 
 ## Authority boundary
 
@@ -177,7 +179,39 @@ replace official in-memory state + RNG
 
 This is transaction-like only within one process and one session. It does not provide locks,
 multi-process coordination, database transactions, event persistence, or replay. The application
-session is not connected to FastAPI or the frontend.
+session is reached through the TASK-007 single-game runtime rather than directly from routes.
+
+## Current web runtime boundary
+
+```text
+vanilla TypeScript controller
+        |
+        | strict JSON DTOs and stable API errors
+        v
+FastAPI route adapter
+        |
+        v
+SingleGameRuntime
+  - one configured JsonFileSaveRepository
+  - zero or one active PersistentGameSession
+  - zero or one opaque server CharacterCreationDraft
+  - NewGameService, prototype trait catalog, injected sources
+        |
+        v
+application/domain authority
+```
+
+The default save is `runtime-data/buxianxian.save.json`; `BUXIANXIAN_SAVE_PATH` is the only current
+configuration override. The path and RNG state never enter DTOs. Status distinguishes save-file
+existence from loadability so a corrupt file cannot produce a Continue action or be silently
+overwritten.
+
+New draft creation invalidates the previous server draft. Confirmation submits IDs only and uses
+the retained draft for validation. Validation and save failures retain it; success and successful
+load clear it. Restart loses it by design.
+
+OS entropy creates only the initial nonzero seed. The deterministic xorshift64star source continues
+from the exact post-generation position stored in the save. See ADR-008.
 
 ## Current published-content boundary
 
@@ -204,17 +238,20 @@ The compiler is an infrastructure/authoring tool and does not import the domain,
 session, save adapter, API, or frontend. No runtime layer loads the package yet. See
 `ADR-005-versioned-published-read-only-content.md` for format and compatibility decisions.
 
-## Planned frontend boundaries
+## Current frontend boundaries
 
 ```text
 frontend/src/
 ├─ api/             # HTTP client and transport types
-├─ views/           # Page-level rendering
-├─ components/      # Reusable visual components
-└─ main.ts          # Composition entrypoint
+├─ api/             # HTTP client, unknown-JSON validation, transport types
+├─ app.ts           # pure boot/start/creation/overview controller
+├─ main.ts          # DOM projection and event wiring
+└─ style.css        # responsive prototype presentation
 ```
 
-The first frontend uses vanilla TypeScript. A UI framework may be considered only after measured complexity justifies it.
+The frontend uses vanilla TypeScript. It may keep transient form selection and busy/error state but
+replaces authoritative state only from API responses. A UI framework may be considered only after
+measured complexity justifies it.
 
 ## Data categories
 

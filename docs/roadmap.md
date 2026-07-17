@@ -142,6 +142,10 @@ TASK-006 adds only the pre-session player identity, innate-aptitude candidate, a
 foundation. It does not define trait effects, progression, cultivation, combat attributes, or
 another gameplay loop.
 
+TASK-007 delivers a deliberately narrow P5/P6 vertical slice over the approved time and character
+foundations: single-save new/load/read/wait APIs plus a browser start/creation/overview flow. It does
+not complete the broader planned content/read-model client, replay, or any additional gameplay.
+
 ## P8 — Authoring tools
 
 Deliverables may include:
