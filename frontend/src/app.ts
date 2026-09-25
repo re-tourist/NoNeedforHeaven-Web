@@ -34,12 +34,17 @@ export interface CreatingState {
 
 export interface OverviewState {
   readonly kind: "overview";
-  readonly page: "overview" | "cultivation" | "items";
+  readonly page: GamePage;
   readonly game: GameStateView;
   readonly lastCultivation: CultivationResultView | null;
   readonly busy: boolean;
   readonly error: string | null;
+  readonly menuOpen: boolean;
+  readonly menuMessage: string | null;
 }
+
+export type GamePage =
+  "overview" | "cultivation" | "items" | "map" | "quests" | "log";
 
 export type AppState =
   BootingState | StartState | CreatingState | OverviewState;
@@ -76,6 +81,8 @@ export class GameController {
           lastCultivation: null,
           busy: false,
           error: status.error?.message ?? null,
+          menuOpen: false,
+          menuMessage: null,
         });
         return;
       }
@@ -137,7 +144,9 @@ export class GameController {
 
   updateName(name: string): void {
     if (this.#state.kind === "creating" && !this.#state.busy) {
-      this.#setState({ ...this.#state, name, error: null });
+      // Name input is edited continuously. Do not notify/render on every
+      // keystroke: replacing the input node breaks IME composition and focus.
+      this.#state = { ...this.#state, name, error: null };
     }
   }
 
@@ -261,20 +270,60 @@ export class GameController {
   }
 
   showOverview(): void {
-    if (this.#state.kind === "overview" && !this.#state.busy) {
-      this.#setState({ ...this.#state, page: "overview", error: null });
-    }
+    this.showPage("overview");
   }
 
   showCultivation(): void {
-    if (this.#state.kind === "overview" && !this.#state.busy) {
-      this.#setState({ ...this.#state, page: "cultivation", error: null });
-    }
+    this.showPage("cultivation");
   }
 
   showItems(): void {
+    this.showPage("items");
+  }
+
+  showPage(page: GamePage): void {
     if (this.#state.kind === "overview" && !this.#state.busy) {
-      this.#setState({ ...this.#state, page: "items", error: null });
+      this.#setState({ ...this.#state, page, error: null });
+    }
+  }
+
+  toggleMenu(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({
+        ...this.#state,
+        menuOpen: !this.#state.menuOpen,
+        menuMessage: null,
+      });
+    }
+  }
+
+  saveGame(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({
+        ...this.#state,
+        menuMessage: "当前行动均已自动保存。",
+      });
+    }
+  }
+
+  toggleSettings(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({
+        ...this.#state,
+        menuMessage: "设置功能尚未开放，当前使用本地默认配置。",
+      });
+    }
+  }
+
+  returnToMainMenu(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({
+        kind: "start",
+        saveExists: true,
+        saveAvailable: true,
+        busy: false,
+        error: null,
+      });
     }
   }
 
@@ -317,6 +366,8 @@ export class GameController {
         lastCultivation: response.cultivation_result,
         busy: false,
         error: null,
+        menuOpen: false,
+        menuMessage: null,
       });
     } catch (error: unknown) {
       const refreshed = error instanceof ApiClientError ? error.state : null;
@@ -405,6 +456,8 @@ function overviewState(game: GameStateView): OverviewState {
     lastCultivation: null,
     busy: false,
     error: null,
+    menuOpen: false,
+    menuMessage: null,
   };
 }
 

@@ -113,7 +113,7 @@ input:focus-visible {
 
 .game-statusbar {
   display: grid;
-  grid-template-columns: 1.4fr repeat(3, 1fr);
+  grid-template-columns: minmax(9rem, 1.4fr) repeat(3, minmax(6rem, 1fr)) auto;
   gap: 0.65rem;
   margin-bottom: 1rem;
   padding: 0.65rem;
@@ -145,7 +145,7 @@ input:focus-visible {
 
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 13.5rem;
+  grid-template-columns: 8.5rem minmax(0, 1fr) 13.5rem;
   gap: 1.25rem;
   align-items: start;
 }
@@ -244,6 +244,90 @@ input:focus-visible {
   opacity: 0.55;
 }
 
+.game-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.45rem;
+  border: 1px solid #d5c5b1;
+  border-radius: 0.75rem;
+  background: #fbf7f0;
+}
+
+.game-sidebar .game-nav__item {
+  width: 100%;
+  text-align: left;
+}
+
+.status-menu-button {
+  min-height: 2.35rem;
+  white-space: nowrap;
+}
+
+.game-feedback {
+  min-height: 2.7rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #ddd2c2;
+}
+
+.game-feedback .error,
+.game-feedback .notice {
+  margin: 0;
+}
+
+.game-feedback__hint {
+  margin: 0;
+  color: #857665;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.placeholder-page {
+  display: grid;
+  min-height: 15rem;
+  place-items: center;
+  padding: 2rem;
+  border: 1px dashed #c9bba8;
+  border-radius: 0.75rem;
+  color: #756450;
+  background: #faf6ef;
+  text-align: center;
+}
+
+.game-menu-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(45 32 21 / 35%);
+}
+
+.game-menu {
+  width: min(25rem, 100%);
+  padding: 1.5rem;
+  border: 1px solid #cdb99e;
+  border-radius: 0.9rem;
+  background: #fffaf2;
+  box-shadow: 0 1.5rem 4rem rgb(45 32 21 / 25%);
+}
+
+.game-menu .section-title {
+  margin-bottom: 1rem;
+}
+
+.game-menu__actions {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.game-menu__actions .button {
+  width: 100%;
+}
+
 .subheading {
   margin: 1.75rem 0 0.8rem;
   font-size: 1.08rem;
@@ -278,6 +362,15 @@ input:focus-visible {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 1.5rem;
+}
+
+.start-settings {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #d5c5b1;
+  border-radius: 0.6rem;
+  color: #6f5b45;
+  background: #faf6ef;
 }
 
 .button {
@@ -618,11 +711,19 @@ input:focus-visible {
   }
 
   .game-statusbar {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .game-layout {
     grid-template-columns: 1fr;
+  }
+
+  .game-sidebar {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .game-sidebar .game-nav__item {
+    text-align: center;
   }
 
   .character-info {
@@ -641,10 +742,14 @@ input:focus-visible {
 
 @media (min-width: 721px) and (max-width: 980px) {
   .game-layout {
-    grid-template-columns: minmax(0, 1fr) 11rem;
+    grid-template-columns: 7rem minmax(0, 1fr) 10.5rem;
   }
 
   .game-statusbar {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .status-menu-button {
+    grid-column: 1 / -1;
   }
 }

@@ -4,6 +4,7 @@ import {
   GameController,
   type AppState,
   type CreatingState,
+  type GamePage,
   type OverviewState,
 } from "./app";
 import { HttpGameApi, type Aptitudes, type ItemStackView } from "./api/game";
@@ -16,6 +17,13 @@ if (root === null) {
 const controller = new GameController(new HttpGameApi());
 controller.subscribe(() => {
   render(root, controller);
+});
+document.addEventListener("keydown", (event) => {
+  // Escape is a game shortcut, but must never interrupt an active IME
+  // composition (the browser marks IME key events with isComposing).
+  if (event.key === "Escape" && !event.isComposing) {
+    controller.toggleMenu();
+  }
 });
 render(root, controller);
 await controller.initialize();
@@ -67,7 +75,7 @@ function renderStart(
   game: GameController,
 ): HTMLElement {
   const panel = element("section", "panel");
-  panel.append(element("h2", "section-title", "开始"));
+  panel.append(element("h2", "section-title", "主菜单"));
   if (state.error !== null) {
     panel.append(renderError(state.error));
   }
@@ -82,6 +90,27 @@ function renderStart(
     continueButton.addEventListener("click", () => void game.continueGame());
     actions.append(continueButton);
   }
+  const readButton = button("读取存档", "button button--secondary");
+  readButton.disabled = state.busy || !state.saveAvailable;
+  readButton.addEventListener("click", () => void game.continueGame());
+  actions.append(readButton);
+  const settingsButton = button("设置", "button button--secondary");
+  settingsButton.disabled = state.busy;
+  settingsButton.addEventListener("click", () => {
+    const existing = panel.querySelector(".start-settings");
+    if (existing !== null) {
+      existing.remove();
+      return;
+    }
+    panel.append(
+      element(
+        "div",
+        "start-settings",
+        "设置功能尚未开放。当前使用本地单存档和默认界面配置。",
+      ),
+    );
+  });
+  actions.append(settingsButton);
   if (state.saveExists && !state.saveAvailable) {
     panel.append(
       element(
@@ -119,8 +148,13 @@ function renderCreation(
   nameInput.autocomplete = "off";
   nameInput.value = state.name;
   nameInput.disabled = state.busy;
+  let confirmButton: HTMLButtonElement | null = null;
   nameInput.addEventListener("input", () => {
     game.updateName(nameInput.value);
+    panel.querySelector(".error")?.remove();
+    if (confirmButton !== null) {
+      confirmButton.disabled = !game.canConfirm();
+    }
   });
   nameGroup.append(nameLabel, nameInput);
   panel.append(nameGroup);
@@ -192,6 +226,7 @@ function renderCreation(
   regenerate.disabled = state.busy;
   regenerate.addEventListener("click", () => void game.regenerateDraft());
   const confirm = button("确认创建并保存", "button button--primary");
+  confirmButton = confirm;
   confirm.disabled = !game.canConfirm();
   confirm.addEventListener("click", () => void game.confirmNewGame());
   actions.append(regenerate, confirm);
@@ -205,28 +240,35 @@ function renderCreation(
 function renderGame(state: OverviewState, game: GameController): HTMLElement {
   const panel = element("section", "panel panel--wide");
   panel.classList.add("game-panel");
-  panel.append(renderGameStatusBar(state), renderGameNavigation(state, game));
-  if (state.error !== null) {
-    panel.append(renderError(state.error));
-  }
+  panel.append(renderGameStatusBar(state, game));
   const layout = element("div", "game-layout");
+  layout.append(renderGameNavigation(state, game));
   const main = element("main", "game-main");
   if (state.page === "cultivation") {
     main.append(renderCultivation(state, game));
   } else if (state.page === "items") {
     main.append(renderItems(state, game));
-  } else {
+  } else if (state.page === "overview") {
     main.append(renderOverview(state, game));
+  } else {
+    main.append(renderPlaceholder(state.page));
   }
   layout.append(main, renderCharacterInfo(state));
   panel.append(layout);
+  panel.append(renderGameFeedback(state));
+  if (state.menuOpen) {
+    panel.append(renderGameMenu(state, game));
+  }
   if (state.busy) {
     panel.append(element("p", "loading", "正在结算并保存…"));
   }
   return panel;
 }
 
-function renderGameStatusBar(state: OverviewState): HTMLElement {
+function renderGameStatusBar(
+  state: OverviewState,
+  game: GameController,
+): HTMLElement {
   const bar = element("div", "game-statusbar");
   bar.append(
     statusChip("当前角色", state.game.player.name),
@@ -239,6 +281,15 @@ function renderGameStatusBar(state: OverviewState): HTMLElement {
         : "寻轮中",
     ),
   );
+  const menuButton = button(
+    "菜单 · Esc",
+    "button button--secondary status-menu-button",
+  );
+  menuButton.addEventListener("click", () => {
+    game.toggleMenu();
+  });
+  menuButton.disabled = state.busy;
+  bar.append(menuButton);
   return bar;
 }
 
@@ -282,43 +333,105 @@ function renderGameNavigation(
   state: OverviewState,
   game: GameController,
 ): HTMLElement {
-  const navigation = element("nav", "game-nav");
+  const navigation = element("nav", "game-nav game-sidebar");
   navigation.setAttribute("aria-label", "游戏内页面");
-  const overview = button(
-    "总览",
-    `game-nav__item${state.page === "overview" ? " game-nav__item--active" : ""}`,
-  );
-  overview.setAttribute(
-    "aria-current",
-    state.page === "overview" ? "page" : "false",
-  );
-  overview.disabled = state.busy;
-  overview.addEventListener("click", () => {
-    game.showOverview();
-  });
-  const cultivation = button(
-    "修炼",
-    `game-nav__item${state.page === "cultivation" ? " game-nav__item--active" : ""}`,
-  );
-  cultivation.setAttribute(
-    "aria-current",
-    state.page === "cultivation" ? "page" : "false",
-  );
-  cultivation.disabled = state.busy;
-  cultivation.addEventListener("click", () => {
-    game.showCultivation();
-  });
-  const items = button(
-    "物品",
-    `game-nav__item${state.page === "items" ? " game-nav__item--active" : ""}`,
-  );
-  items.setAttribute("aria-current", state.page === "items" ? "page" : "false");
-  items.disabled = state.busy;
-  items.addEventListener("click", () => {
-    game.showItems();
-  });
-  navigation.append(overview, cultivation, items);
+  const entries: readonly [GamePage, string][] = [
+    ["overview", "总览"],
+    ["cultivation", "修炼"],
+    ["items", "背包"],
+    ["map", "地图"],
+    ["quests", "任务"],
+    ["log", "日志"],
+  ];
+  for (const [page, label] of entries) {
+    const item = button(
+      label,
+      `game-nav__item${state.page === page ? " game-nav__item--active" : ""}`,
+    );
+    item.setAttribute("aria-current", state.page === page ? "page" : "false");
+    item.disabled = state.busy;
+    item.addEventListener("click", () => {
+      game.showPage(page);
+    });
+    navigation.append(item);
+  }
   return navigation;
+}
+
+function renderPlaceholder(
+  page: Exclude<GamePage, "overview" | "cultivation" | "items">,
+): DocumentFragment {
+  const labels: Record<typeof page, [string, string]> = {
+    map: ["地图", "地图功能尚未开放。后续将用于查看旅途与地点。"],
+    quests: ["任务", "任务功能尚未开放。当前没有可接取任务。"],
+    log: ["日志", "日志功能尚未开放。重要行动记录将在后续版本显示。"],
+  };
+  const [title, message] = labels[page];
+  const content = document.createDocumentFragment();
+  content.append(
+    element("h2", "section-title", title),
+    element("div", "placeholder-page", message),
+  );
+  return content;
+}
+
+function renderGameFeedback(state: OverviewState): HTMLElement {
+  const feedback = element("div", "game-feedback");
+  feedback.setAttribute("aria-live", "polite");
+  if (state.error !== null) {
+    feedback.append(renderError(state.error));
+  } else if (state.menuMessage !== null) {
+    feedback.append(element("p", "notice", state.menuMessage));
+  } else {
+    feedback.append(
+      element("p", "game-feedback__hint", "所有行动都会在结算成功后自动保存。"),
+    );
+  }
+  return feedback;
+}
+
+function renderGameMenu(
+  state: OverviewState,
+  game: GameController,
+): HTMLElement {
+  const backdrop = element("div", "game-menu-backdrop");
+  const menu = element("section", "game-menu");
+  menu.setAttribute("role", "dialog");
+  menu.setAttribute("aria-modal", "true");
+  menu.setAttribute("aria-label", "游戏菜单");
+  menu.append(
+    element("p", "eyebrow", "暂停菜单"),
+    element("h2", "section-title", "游戏菜单"),
+  );
+  const actions = element("div", "game-menu__actions");
+  const continueButton = button("继续游戏", "button button--primary");
+  continueButton.addEventListener("click", () => {
+    game.toggleMenu();
+  });
+  const saveButton = button("保存游戏", "button button--secondary");
+  saveButton.addEventListener("click", () => {
+    game.saveGame();
+  });
+  const settingsButton = button("设置", "button button--secondary");
+  settingsButton.addEventListener("click", () => {
+    game.toggleSettings();
+  });
+  const mainMenuButton = button("返回主菜单", "button button--secondary");
+  mainMenuButton.addEventListener("click", () => {
+    game.returnToMainMenu();
+  });
+  actions.append(continueButton, saveButton, settingsButton, mainMenuButton);
+  menu.append(actions);
+  if (state.menuMessage !== null) {
+    menu.append(element("p", "notice", state.menuMessage));
+  }
+  backdrop.append(menu);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) {
+      game.toggleMenu();
+    }
+  });
+  return backdrop;
 }
 
 function renderOverview(
