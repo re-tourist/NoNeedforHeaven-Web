@@ -22,6 +22,7 @@ from buxianxian.domain import (
     PlayerCharacter,
 )
 from buxianxian.infrastructure import (
+    PROTOTYPE_ITEM_CATALOG,
     PROTOTYPE_TRAIT_CATALOG,
     JsonFileSaveRepository,
     LoadedSave,
@@ -78,6 +79,7 @@ def _runtime(
     return SingleGameRuntime[XorShift64StarRandom](
         repository=repository,
         trait_catalog=PROTOTYPE_TRAIT_CATALOG,
+        item_catalog=PROTOTYPE_ITEM_CATALOG,
         random_source_factory=FixedRandomFactory(seed),
         draft_identifier_source=SequentialDraftIds(),
     )

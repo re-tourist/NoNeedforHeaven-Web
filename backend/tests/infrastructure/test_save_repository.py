@@ -7,6 +7,7 @@ import pytest
 
 import buxianxian.infrastructure.save_repository as save_repository_module
 from buxianxian.domain import (
+    LOW_SPIRIT_STONE_ID,
     Accepted,
     AdvanceTime,
     CultivationStage,
@@ -14,7 +15,9 @@ from buxianxian.domain import (
     DomainEngine,
     GameState,
     InnateAptitudes,
+    ItemStack,
     PlayerCharacter,
+    StorageState,
     WheelSeekingStatus,
 )
 from buxianxian.infrastructure import (
@@ -33,7 +36,12 @@ TEST_PLAYER = PlayerCharacter(
 )
 
 
-def _state(revision: int, elapsed_days: int, insight: int = 0) -> GameState:
+def _state(
+    revision: int,
+    elapsed_days: int,
+    insight: int = 0,
+    storage: StorageState | None = None,
+) -> GameState:
     return GameState(
         revision=revision,
         elapsed_days=elapsed_days,
@@ -47,6 +55,7 @@ def _state(revision: int, elapsed_days: int, insight: int = 0) -> GameState:
                 else WheelSeekingStatus.SEEKING
             ),
         ),
+        storage=StorageState.initial() if storage is None else storage,
     )
 
 
@@ -72,6 +81,18 @@ def _cultivation_payload() -> dict[str, object]:
     }
 
 
+def _storage_payload() -> dict[str, object]:
+    return {
+        "backpack": [
+            {"item_id": "document.tattered_scroll", "quantity": 1},
+            {"item_id": "material.common_herb", "quantity": 3},
+            {"item_id": "provision.dry_food", "quantity": 5},
+            {"item_id": "spirit_stone.low", "quantity": 20},
+        ],
+        "warehouse": [],
+    }
+
+
 def _valid_payload() -> dict[str, object]:
     return {
         "format": SAVE_FORMAT,
@@ -81,6 +102,7 @@ def _valid_payload() -> dict[str, object]:
             "elapsed_days": 7,
             "player": _player_payload(),
             "cultivation": _cultivation_payload(),
+            "storage": _storage_payload(),
         },
         "random": {
             "algorithm": "xorshift64star",
@@ -103,7 +125,20 @@ def _assert_load_error(repository: JsonFileSaveRepository, code: SaveErrorCode) 
 def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path: Path) -> None:
     path = tmp_path / "save.json"
     repository = JsonFileSaveRepository(path)
-    state = _state(revision=4, elapsed_days=11, insight=42)
+    state = _state(
+        revision=4,
+        elapsed_days=11,
+        insight=42,
+        storage=StorageState(
+            backpack=(
+                ItemStack("document.tattered_scroll", 1),
+                ItemStack("material.common_herb", 3),
+                ItemStack("provision.dry_food", 5),
+                ItemStack(LOW_SPIRIT_STONE_ID, 13),
+            ),
+            warehouse=(ItemStack(LOW_SPIRIT_STONE_ID, 7),),
+        ),
+    )
     random_source = XorShift64StarRandom.from_seed(0xCAFE_BABE)
     random_source.integer_inclusive(1, 10)
     expected_random_state = random_source.snapshot()
@@ -115,7 +150,7 @@ def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path
     assert loaded.random_source.snapshot() == expected_random_state
     decoded: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
     assert decoded["format"] == "buxianxian-save"
-    assert decoded["schema_version"] == 4
+    assert decoded["schema_version"] == 5
     assert decoded["state"] == {
         "elapsed_days": 11,
         "player": _player_payload(),
@@ -125,6 +160,15 @@ def test_save_round_trip_preserves_complete_player_time_rng_and_markers(tmp_path
             "wheel_status": "seeking",
         },
         "revision": 4,
+        "storage": {
+            "backpack": [
+                {"item_id": "document.tattered_scroll", "quantity": 1},
+                {"item_id": "material.common_herb", "quantity": 3},
+                {"item_id": "provision.dry_food", "quantity": 5},
+                {"item_id": "spirit_stone.low", "quantity": 13},
+            ],
+            "warehouse": [{"item_id": "spirit_stone.low", "quantity": 7}],
+        },
     }
 
 
@@ -223,9 +267,18 @@ def test_wrong_product_is_rejected(tmp_path: Path) -> None:
                 "player": _player_payload(),
             },
         ),
+        (
+            4,
+            {
+                "revision": 2,
+                "elapsed_days": 7,
+                "player": _player_payload(),
+                "cultivation": _cultivation_payload(),
+            },
+        ),
     ],
 )
-def test_pre_alpha_schema_without_player_is_explicitly_unsupported(
+def test_earlier_pre_alpha_schema_is_explicitly_unsupported(
     tmp_path: Path,
     schema_version: int,
     state: dict[str, object],
@@ -262,18 +315,21 @@ def test_unknown_schema_version_is_rejected_before_guessing(tmp_path: Path) -> N
             "elapsed_days": 7,
             "player": _player_payload(),
             "cultivation": _cultivation_payload(),
+            "storage": _storage_payload(),
         },
         {
             "revision": 1,
             "elapsed_days": -1,
             "player": _player_payload(),
             "cultivation": _cultivation_payload(),
+            "storage": _storage_payload(),
         },
         {
             "revision": 1,
             "elapsed_days": True,
             "player": _player_payload(),
             "cultivation": _cultivation_payload(),
+            "storage": _storage_payload(),
         },
         {"revision": 1, "elapsed_days": 7},
     ],
@@ -285,6 +341,40 @@ def test_invalid_formal_domain_state_is_rejected(
     path = tmp_path / "save.json"
     payload = _valid_payload()
     payload["state"] = invalid_state
+    _write_payload(path, payload)
+
+    _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
+
+
+@pytest.mark.parametrize(
+    "invalid_storage",
+    [
+        {
+            "backpack": [
+                {"item_id": "spirit_stone.low", "quantity": 1},
+                {"item_id": "spirit_stone.low", "quantity": 2},
+            ],
+            "warehouse": [],
+        },
+        {
+            "backpack": [{"item_id": "spirit_stone.low", "quantity": 0}],
+            "warehouse": [],
+        },
+        {
+            "backpack": [{"item_id": "unknown item", "quantity": 1}],
+            "warehouse": [],
+        },
+    ],
+)
+def test_invalid_storage_state_is_rejected(
+    tmp_path: Path,
+    invalid_storage: dict[str, object],
+) -> None:
+    path = tmp_path / "save.json"
+    payload = _valid_payload()
+    state = payload["state"]
+    assert isinstance(state, dict)
+    state["storage"] = invalid_storage
     _write_payload(path, payload)
 
     _assert_load_error(JsonFileSaveRepository(path), SaveErrorCode.INVALID_DATA)
@@ -321,6 +411,7 @@ def test_invalid_player_profile_is_rejected(
         "elapsed_days": 0,
         "player": invalid_player,
         "cultivation": _cultivation_payload(),
+        "storage": _storage_payload(),
     }
     _write_payload(path, payload)
 
@@ -363,6 +454,7 @@ def test_invalid_cultivation_state_is_rejected(
         "elapsed_days": 0,
         "player": _player_payload(),
         "cultivation": invalid_cultivation,
+        "storage": _storage_payload(),
     }
     _write_payload(path, payload)
 

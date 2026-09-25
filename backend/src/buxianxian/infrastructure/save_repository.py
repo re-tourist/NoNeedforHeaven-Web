@@ -15,7 +15,9 @@ from buxianxian.domain import (
     CultivationState,
     GameState,
     InnateAptitudes,
+    ItemStack,
     PlayerCharacter,
+    StorageState,
     WheelSeekingStatus,
 )
 from buxianxian.infrastructure.random_source import (
@@ -24,7 +26,7 @@ from buxianxian.infrastructure.random_source import (
 )
 
 SAVE_FORMAT = "buxianxian-save"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -80,7 +82,7 @@ class JsonFileSaveRepository:
     def save(self, state: GameState, random_source: XorShift64StarRandom) -> None:
         """Serialize completely, then atomically replace the configured save."""
 
-        payload = _encode_v4(state, random_source.snapshot())
+        payload = _encode_v5(state, random_source.snapshot())
         serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(self.path, serialized)
 
@@ -116,7 +118,7 @@ class JsonFileSaveRepository:
         return loader(payload)
 
 
-def _encode_v4(
+def _encode_v5(
     state: GameState,
     random_state: RandomStateSnapshot,
 ) -> dict[str, JsonValue]:
@@ -142,6 +144,10 @@ def _encode_v4(
                 "wheel_insight": state.cultivation.wheel_insight,
                 "wheel_status": state.cultivation.wheel_status.value,
             },
+            "storage": {
+                "backpack": [_encode_stack(stack) for stack in state.storage.backpack],
+                "warehouse": [_encode_stack(stack) for stack in state.storage.warehouse],
+            },
         },
         "random": {
             "algorithm": random_state.algorithm,
@@ -151,7 +157,7 @@ def _encode_v4(
     }
 
 
-def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
+def _load_v5(payload: dict[str, JsonValue]) -> LoadedSave:
     _require_exact_fields(
         payload,
         frozenset({"format", "schema_version", "state", "random"}),
@@ -162,7 +168,7 @@ def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
     state_payload = _required_object(payload, "state", SaveErrorCode.INVALID_DATA)
     _require_exact_fields(
         state_payload,
-        frozenset({"revision", "elapsed_days", "player", "cultivation"}),
+        frozenset({"revision", "elapsed_days", "player", "cultivation", "storage"}),
         SaveErrorCode.INVALID_DATA,
         "domain state",
     )
@@ -252,6 +258,25 @@ def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
         "wheel_status",
         SaveErrorCode.INVALID_DATA,
     )
+    storage_payload = _required_object(
+        state_payload,
+        "storage",
+        SaveErrorCode.INVALID_DATA,
+    )
+    _require_exact_fields(
+        storage_payload,
+        frozenset({"backpack", "warehouse"}),
+        SaveErrorCode.INVALID_DATA,
+        "storage state",
+    )
+    backpack = _decode_stacks(
+        _required_array(storage_payload, "backpack", SaveErrorCode.INVALID_DATA),
+        "backpack",
+    )
+    warehouse = _decode_stacks(
+        _required_array(storage_payload, "warehouse", SaveErrorCode.INVALID_DATA),
+        "warehouse",
+    )
 
     try:
         aptitudes = InnateAptitudes(
@@ -271,11 +296,13 @@ def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
             wheel_insight=wheel_insight,
             wheel_status=WheelSeekingStatus(wheel_status_value),
         )
+        storage = StorageState(backpack=backpack, warehouse=warehouse)
         state = GameState(
             revision=revision,
             elapsed_days=elapsed_days,
             player=player,
             cultivation=cultivation,
+            storage=storage,
         )
     except TypeError, ValueError:
         raise SaveError(SaveErrorCode.INVALID_DATA, "domain state is invalid") from None
@@ -333,8 +360,38 @@ def _load_v4(payload: dict[str, JsonValue]) -> LoadedSave:
 type _VersionLoader = Callable[[dict[str, JsonValue]], LoadedSave]
 
 _VERSION_LOADERS: dict[int, _VersionLoader] = {
-    CURRENT_SCHEMA_VERSION: _load_v4,
+    CURRENT_SCHEMA_VERSION: _load_v5,
 }
+
+
+def _encode_stack(stack: ItemStack) -> dict[str, JsonValue]:
+    return {"item_id": stack.item_id, "quantity": stack.quantity}
+
+
+def _decode_stacks(payload: list[JsonValue], label: str) -> tuple[ItemStack, ...]:
+    stacks: list[ItemStack] = []
+    for value in payload:
+        item_payload = _require_object_value(
+            value,
+            SaveErrorCode.INVALID_DATA,
+            f"{label} item stack",
+        )
+        _require_exact_fields(
+            item_payload,
+            frozenset({"item_id", "quantity"}),
+            SaveErrorCode.INVALID_DATA,
+            f"{label} item stack",
+        )
+        item_id = _required_string(item_payload, "item_id", SaveErrorCode.INVALID_DATA)
+        quantity = _required_integer(item_payload, "quantity", SaveErrorCode.INVALID_DATA)
+        try:
+            stacks.append(ItemStack(item_id=item_id, quantity=quantity))
+        except ValueError:
+            raise SaveError(
+                SaveErrorCode.INVALID_DATA,
+                f"{label} item stack is invalid",
+            ) from None
+    return tuple(stacks)
 
 
 def _decode_json_object(serialized: str) -> dict[str, JsonValue]:

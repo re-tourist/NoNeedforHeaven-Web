@@ -1,5 +1,6 @@
 """Infrastructure adapters for local persistence and deterministic randomness."""
 
+from buxianxian.infrastructure.prototype_items import PROTOTYPE_ITEM_CATALOG
 from buxianxian.infrastructure.prototype_traits import PROTOTYPE_TRAIT_CATALOG
 from buxianxian.infrastructure.random_source import (
     RandomStateSnapshot,
@@ -20,6 +21,7 @@ from buxianxian.infrastructure.save_repository import (
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "PROTOTYPE_ITEM_CATALOG",
     "PROTOTYPE_TRAIT_CATALOG",
     "SAVE_FORMAT",
     "JsonFileSaveRepository",

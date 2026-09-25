@@ -10,6 +10,12 @@ from buxianxian.domain.cultivation import (
     SeekWheel,
     WheelSeekingCompleted,
 )
+from buxianxian.domain.storage import (
+    ItemTransferred,
+    RetrieveItem,
+    StorageState,
+    StoreItem,
+)
 
 MAX_ADVANCE_DAYS = 1_000_000
 MAX_ELAPSED_DAYS = (1 << 63) - 1
@@ -80,6 +86,7 @@ class GameState:
     elapsed_days: int
     player: PlayerCharacter
     cultivation: CultivationState = field(default_factory=CultivationState.initial)
+    storage: StorageState = field(default_factory=StorageState.initial)
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -94,6 +101,8 @@ class GameState:
             raise ValueError("player must be a complete PlayerCharacter value")
         if not _is_instance_of(self.cultivation, CultivationState):
             raise ValueError("cultivation must be a complete CultivationState value")
+        if not _is_instance_of(self.storage, StorageState):
+            raise ValueError("storage must be a complete StorageState value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +112,7 @@ class AdvanceTime:
     days: int
 
 
-type Command = AdvanceTime | SeekWheel
+type Command = AdvanceTime | SeekWheel | StoreItem | RetrieveItem
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +124,7 @@ class TimeAdvanced:
     days_elapsed: int
 
 
-type DomainEvent = TimeAdvanced | WheelSeekingCompleted
+type DomainEvent = TimeAdvanced | WheelSeekingCompleted | ItemTransferred
 
 
 class RejectionReason(StrEnum):
@@ -126,6 +135,11 @@ class RejectionReason(StrEnum):
     INVALID_SEEK_WHEEL_DAY_COUNT = "invalid_seek_wheel_day_count"
     SEEK_WHEEL_DAY_COUNT_OUT_OF_RANGE = "seek_wheel_day_count_out_of_range"
     WHEEL_ALREADY_SUSPECTED = "wheel_already_suspected"
+    INVALID_ITEM_QUANTITY = "invalid_item_quantity"
+    ITEM_QUANTITY_OUT_OF_RANGE = "item_quantity_out_of_range"
+    UNKNOWN_ITEM = "unknown_item"
+    SOURCE_ITEM_INSUFFICIENT = "source_item_insufficient"
+    BACKPACK_CAPACITY_EXCEEDED = "backpack_capacity_exceeded"
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,7 +33,9 @@ TASK-005 adds the first bounded P7 capability, authoritative elapsed-day time. T
 deterministic pre-session character creation and a complete player-bearing state.
 TASK-007 connects those bounded capabilities through one single-save application runtime, FastAPI
 DTOs, and a vanilla TypeScript client. TASK-008 adds the first atomic cultivation/time/RNG vertical
-slice. Runtime content loading, replay, and all other gameplay remain deferred.
+slice. TASK-009 adds immutable storage stacks and versioned save schema v5. TASK-010 keeps the
+frontend vanilla and organizes its existing pages in one game shell. Runtime content loading,
+replay, and all other gameplay remain deferred.
 
 ## Authority boundary
 
@@ -94,11 +96,12 @@ concrete deterministic RNG    -> domain RandomSource protocol
 domain                        -X-> infrastructure
 ```
 
-The `buxianxian-save` v4 snapshot contains a complete authoritative `GameState` plus an explicitly
+The `buxianxian-save` v5 snapshot contains a complete authoritative `GameState` plus an explicitly
 identified and versioned random state. Loading dispatches on the save schema version. Events are not
-persisted or replayed. Experimental schemas v1 through v3 are explicitly unsupported rather than
+persisted or replayed. Experimental schemas v1 through v4 are explicitly unsupported rather than
 fictionally migrated. See ADR-004 for snapshot/RNG/atomic-write decisions, ADR-006 for authoritative
-time and compatibility policy, ADR-007 for player state, and ADR-009 for cultivation/schema v4.
+time and compatibility policy, ADR-007 for player state, ADR-009 for cultivation/schema v4, and
+ADR-010 for storage/schema v5.
 
 ## Current authoritative time boundary
 
@@ -116,6 +119,9 @@ GameState
    ├─ stage: seeking_wheel
    ├─ wheel_insight: integer 0–100
    └─ wheel_status: seeking | suspected_sighting
+└─ storage: StorageState
+   ├─ backpack: sorted immutable item stacks, maximum 12 distinct IDs
+   └─ warehouse: sorted immutable item stacks, no capacity limit
 ```
 
 `AdvanceTime(days)` is validated and handled only in the pure domain. Success creates an independent
@@ -141,6 +147,14 @@ same time/insight/status/RNG position until early stop, aside from revision coun
 The browser receives a projection of state, threshold, and aggregate result. It does not reproduce
 the formula. Suspected sighting is only the entry to the later breath/pain/dream trials; those trials
 and every later stage are absent. See ADR-009.
+
+## Current storage boundary
+
+TASK-009 adds only four pre-alpha display definitions and two typed domain commands:
+`StoreItem(item_id, quantity)` and `RetrieveItem(item_id, quantity)`. The authoritative save stores
+IDs and positive quantities, not display metadata. Transfers preserve total quantity, do not advance
+time or consume RNG, and use the existing revision/save-before-memory commit boundary. Item effects,
+use, equip, drop, trade, and crafting are deferred.
 
 ## Current new-game boundary
 

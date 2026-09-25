@@ -1,12 +1,12 @@
 # 不羡仙 backend
 
 This package contains the local authoritative Python runtime. The API retains the TASK-000 health
-check and exposes the bounded single-save game and TASK-008 cultivation routes. Transport DTOs
+check and exposes the bounded single-save game, cultivation routes, and TASK-009 item routes. Transport DTOs
 project existing application/domain contracts; routes do not reimplement rules.
 
-`buxianxian.infrastructure` implements the `buxianxian-save` JSON v4 file adapter and the versioned
-`xorshift64star` random source. Schema v4 stores the complete player, revision, authoritative elapsed
-days, cultivation state, and RNG state; experimental schemas v1-v3 are explicitly unsupported.
+`buxianxian.infrastructure` implements the `buxianxian-save` JSON v5 file adapter and the versioned
+`xorshift64star` random source. Schema v5 stores the complete player, revision, authoritative elapsed
+days, cultivation state, storage stacks, and RNG state; experimental schemas v1-v4 are explicitly unsupported.
 Persistence depends on the domain contract; the domain does not depend on persistence, JSON,
 Pydantic, or the filesystem. Tests use pytest temporary directories and do not create player saves
 in the repository.
@@ -34,5 +34,9 @@ immutable cultivation state and `SeekWheel(max_days)`. Every actual seeking day 
 two controlled RNG calls; one accepted command atomically commits insight, actual elapsed days,
 status, one revision, one summary event, and the resulting RNG position. The rule ends at suspected
 sighting and does not implement the three trials or a later cultivation stage.
+
+TASK-009 adds four pre-alpha item definitions, immutable backpack/warehouse stacks, atomic
+`StoreItem`/`RetrieveItem` commands, and save schema v5. Transfers do not advance time or consume
+RNG, and the existing session commits them with the same save-before-memory semantics.
 
 See the repository root `README.md` for setup, development, and verification commands.

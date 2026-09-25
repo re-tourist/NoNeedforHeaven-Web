@@ -24,7 +24,10 @@ from buxianxian.domain import (
     CharacterCreationCandidates,
     CharacterCreationErrorCode,
     GameState,
+    ItemDefinition,
+    RetrieveItem,
     SeekWheel,
+    StoreItem,
     TraitDefinition,
 )
 
@@ -122,6 +125,7 @@ class SingleGameRuntime[RandomT: TransactionalRandomSource]:
     __slots__ = (
         "_draft",
         "_draft_identifier_source",
+        "_item_catalog",
         "_new_game_service",
         "_random_source_factory",
         "_repository",
@@ -133,11 +137,13 @@ class SingleGameRuntime[RandomT: TransactionalRandomSource]:
         self,
         repository: SingleSaveRepository[RandomT],
         trait_catalog: Sequence[TraitDefinition],
+        item_catalog: Sequence[ItemDefinition],
         random_source_factory: TransactionalRandomSourceFactory[RandomT],
         draft_identifier_source: DraftIdentifierSource,
     ) -> None:
         self._repository = repository
         self._trait_catalog = tuple(trait_catalog)
+        self._item_catalog = tuple(item_catalog)
         self._new_game_service = NewGameService[RandomT](repository, self._trait_catalog)
         self._random_source_factory = random_source_factory
         self._draft_identifier_source = draft_identifier_source
@@ -149,6 +155,12 @@ class SingleGameRuntime[RandomT: TransactionalRandomSource]:
         """Return immutable prototype definitions for presentation projection."""
 
         return self._trait_catalog
+
+    @property
+    def item_catalog(self) -> tuple[ItemDefinition, ...]:
+        """Return immutable prototype item definitions for projection."""
+
+        return self._item_catalog
 
     @property
     def active_session(self) -> PersistentGameSession[RandomT] | None:
@@ -281,5 +293,35 @@ class SingleGameRuntime[RandomT: TransactionalRandomSource]:
             return NoActiveSession()
         return self._session.submit(
             SeekWheel(max_days=max_days),
+            expected_revision,
+        )
+
+    def store_item(
+        self,
+        item_id: str,
+        quantity: int,
+        expected_revision: int,
+    ) -> RuntimeCommandResult:
+        """Submit an atomic backpack-to-warehouse transfer."""
+
+        if self._session is None:
+            return NoActiveSession()
+        return self._session.submit(
+            StoreItem(item_id=item_id, quantity=quantity),
+            expected_revision,
+        )
+
+    def retrieve_item(
+        self,
+        item_id: str,
+        quantity: int,
+        expected_revision: int,
+    ) -> RuntimeCommandResult:
+        """Submit an atomic warehouse-to-backpack transfer."""
+
+        if self._session is None:
+            return NoActiveSession()
+        return self._session.submit(
+            RetrieveItem(item_id=item_id, quantity=quantity),
             expected_revision,
         )

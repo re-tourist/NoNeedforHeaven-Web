@@ -14,6 +14,7 @@ export type ApiErrorCode =
   | "revision_conflict"
   | "time_command_rejected"
   | "cultivation_command_rejected"
+  | "item_command_rejected"
   | "persistence_failed";
 
 export type ClientErrorCode =
@@ -44,6 +45,7 @@ export interface GameStateView {
   readonly elapsed_days: number;
   readonly player: PlayerSummary;
   readonly cultivation: CultivationStateView;
+  readonly storage: StorageStateView;
 }
 
 export interface CultivationStateView {
@@ -51,6 +53,21 @@ export interface CultivationStateView {
   readonly wheel_insight: number;
   readonly wheel_status: "seeking" | "suspected_sighting";
   readonly suspected_sighting_threshold: number;
+}
+
+export interface ItemStackView {
+  readonly item_id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly category: string;
+  readonly quantity: number;
+}
+
+export interface StorageStateView {
+  readonly backpack_capacity: number;
+  readonly backpack_used_slots: number;
+  readonly backpack: readonly ItemStackView[];
+  readonly warehouse: readonly ItemStackView[];
 }
 
 export interface ApiErrorDetail {
@@ -96,6 +113,12 @@ export interface SeekWheelInput {
   readonly expected_revision: number;
 }
 
+export interface ItemTransferInput {
+  readonly item_id: string;
+  readonly quantity: number;
+  readonly expected_revision: number;
+}
+
 export interface CultivationResultView {
   readonly requested_max_days: number;
   readonly actual_days_elapsed: number;
@@ -120,6 +143,8 @@ export interface GameApi {
   loadGame(): Promise<GameStateView>;
   wait(input: WaitInput): Promise<GameStateView>;
   seekWheel(input: SeekWheelInput): Promise<CultivationResponse>;
+  storeItem(input: ItemTransferInput): Promise<GameStateView>;
+  retrieveItem(input: ItemTransferInput): Promise<GameStateView>;
 }
 
 export class ApiClientError extends Error {
@@ -180,6 +205,24 @@ export class HttpGameApi implements GameApi {
   async seekWheel(input: SeekWheelInput): Promise<CultivationResponse> {
     return parseCultivationEnvelope(
       await this.#request("/api/game/cultivation/seek-wheel", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+  }
+
+  async storeItem(input: ItemTransferInput): Promise<GameStateView> {
+    return parseStateEnvelope(
+      await this.#request("/api/game/items/store", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+  }
+
+  async retrieveItem(input: ItemTransferInput): Promise<GameStateView> {
+    return parseStateEnvelope(
+      await this.#request("/api/game/items/retrieve", {
         method: "POST",
         body: JSON.stringify(input),
       }),
@@ -258,6 +301,7 @@ function isApiErrorCode(value: unknown): value is ApiErrorCode {
       "revision_conflict",
       "time_command_rejected",
       "cultivation_command_rejected",
+      "item_command_rejected",
       "persistence_failed",
     ].includes(value)
   );
@@ -319,6 +363,7 @@ function parseGameState(value: unknown): GameStateView {
       traits: value.player.traits.map(parseTrait),
     },
     cultivation: parseCultivationState(value.cultivation),
+    storage: parseStorageState(value.storage),
   };
 }
 
@@ -338,6 +383,44 @@ function parseCultivationState(value: unknown): CultivationStateView {
     wheel_insight: value.wheel_insight,
     wheel_status: value.wheel_status,
     suspected_sighting_threshold: value.suspected_sighting_threshold,
+  };
+}
+
+function parseStorageState(value: unknown): StorageStateView {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.backpack_capacity) ||
+    !isNumber(value.backpack_used_slots) ||
+    !Array.isArray(value.backpack) ||
+    !Array.isArray(value.warehouse)
+  ) {
+    throw invalidResponse();
+  }
+  return {
+    backpack_capacity: value.backpack_capacity,
+    backpack_used_slots: value.backpack_used_slots,
+    backpack: value.backpack.map(parseItemStack),
+    warehouse: value.warehouse.map(parseItemStack),
+  };
+}
+
+function parseItemStack(value: unknown): ItemStackView {
+  if (
+    !isRecord(value) ||
+    !isString(value.item_id) ||
+    !isString(value.name) ||
+    !isString(value.description) ||
+    !isString(value.category) ||
+    !isNumber(value.quantity)
+  ) {
+    throw invalidResponse();
+  }
+  return {
+    item_id: value.item_id,
+    name: value.name,
+    description: value.description,
+    category: value.category,
+    quantity: value.quantity,
   };
 }
 

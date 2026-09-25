@@ -4,6 +4,7 @@ import {
   type CultivationResultView,
   type GameApi,
   type GameStateView,
+  type ItemTransferInput,
 } from "./api/game";
 
 export interface BootingState {
@@ -33,7 +34,7 @@ export interface CreatingState {
 
 export interface OverviewState {
   readonly kind: "overview";
-  readonly page: "overview" | "cultivation";
+  readonly page: "overview" | "cultivation" | "items";
   readonly game: GameStateView;
   readonly lastCultivation: CultivationResultView | null;
   readonly busy: boolean;
@@ -271,6 +272,12 @@ export class GameController {
     }
   }
 
+  showItems(): void {
+    if (this.#state.kind === "overview" && !this.#state.busy) {
+      this.#setState({ ...this.#state, page: "items", error: null });
+    }
+  }
+
   canSeekWheel(): boolean {
     return (
       this.#state.kind === "overview" &&
@@ -316,6 +323,65 @@ export class GameController {
       this.#setState({
         ...current,
         page: "cultivation",
+        game: refreshed ?? current.game,
+        busy: false,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  async storeItem(itemId: string, quantity: number): Promise<void> {
+    await this.#transferItem("store", itemId, quantity);
+  }
+
+  async retrieveItem(itemId: string, quantity: number): Promise<void> {
+    await this.#transferItem("retrieve", itemId, quantity);
+  }
+
+  async #transferItem(
+    direction: "store" | "retrieve",
+    itemId: string,
+    quantity: number,
+  ): Promise<void> {
+    const current = this.#state;
+    if (current.kind !== "overview" || current.busy) {
+      return;
+    }
+    if (
+      !Number.isInteger(quantity) ||
+      quantity <= 0 ||
+      quantity > 1_000_000_000
+    ) {
+      this.#setState({
+        ...current,
+        page: "items",
+        error: "物品数量必须是安全范围内的正整数。",
+      });
+      return;
+    }
+    this.#setState({ ...current, page: "items", busy: true, error: null });
+    const input: ItemTransferInput = {
+      item_id: itemId,
+      quantity,
+      expected_revision: current.game.revision,
+    };
+    try {
+      const game =
+        direction === "store"
+          ? await this.#api.storeItem(input)
+          : await this.#api.retrieveItem(input);
+      this.#setState({
+        ...current,
+        page: "items",
+        game,
+        busy: false,
+        error: null,
+      });
+    } catch (error: unknown) {
+      const refreshed = error instanceof ApiClientError ? error.state : null;
+      this.#setState({
+        ...current,
+        page: "items",
         game: refreshed ?? current.game,
         busy: false,
         error: errorMessage(error),

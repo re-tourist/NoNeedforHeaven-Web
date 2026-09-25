@@ -6,7 +6,7 @@ import {
   type CreatingState,
   type OverviewState,
 } from "./app";
-import { HttpGameApi, type Aptitudes } from "./api/game";
+import { HttpGameApi, type Aptitudes, type ItemStackView } from "./api/game";
 
 const root = document.querySelector<HTMLElement>("#app");
 if (root === null) {
@@ -204,19 +204,78 @@ function renderCreation(
 
 function renderGame(state: OverviewState, game: GameController): HTMLElement {
   const panel = element("section", "panel panel--wide");
-  panel.append(renderGameNavigation(state, game));
+  panel.classList.add("game-panel");
+  panel.append(renderGameStatusBar(state), renderGameNavigation(state, game));
   if (state.error !== null) {
     panel.append(renderError(state.error));
   }
+  const layout = element("div", "game-layout");
+  const main = element("main", "game-main");
   if (state.page === "cultivation") {
-    panel.append(renderCultivation(state, game));
+    main.append(renderCultivation(state, game));
+  } else if (state.page === "items") {
+    main.append(renderItems(state, game));
   } else {
-    panel.append(renderOverview(state, game));
+    main.append(renderOverview(state, game));
   }
+  layout.append(main, renderCharacterInfo(state));
+  panel.append(layout);
   if (state.busy) {
     panel.append(element("p", "loading", "正在结算并保存…"));
   }
   return panel;
+}
+
+function renderGameStatusBar(state: OverviewState): HTMLElement {
+  const bar = element("div", "game-statusbar");
+  bar.append(
+    statusChip("当前角色", state.game.player.name),
+    statusChip("游戏时间", `第 ${String(state.game.elapsed_days)} 天`),
+    statusChip("修订", String(state.game.revision)),
+    statusChip(
+      "修炼状态",
+      state.game.cultivation.wheel_status === "suspected_sighting"
+        ? "疑见"
+        : "寻轮中",
+    ),
+  );
+  return bar;
+}
+
+function statusChip(label: string, value: string): HTMLElement {
+  const chip = element("div", "status-chip");
+  chip.append(
+    element("span", "status-chip__label", label),
+    element("strong", "status-chip__value", value),
+  );
+  return chip;
+}
+
+function renderCharacterInfo(state: OverviewState): HTMLElement {
+  const aside = element("aside", "character-info");
+  aside.append(
+    element("p", "character-info__eyebrow", "人物信息"),
+    element("h2", "character-info__name", state.game.player.name),
+    element("p", "character-info__meta", "当前旅程 · 单存档"),
+  );
+  const aptitudeList = element("dl", "character-info__aptitudes");
+  for (const [label, value] of aptitudeEntries(state.game.player.aptitudes)) {
+    aptitudeList.append(
+      element("dt", "", label),
+      element("dd", "", String(value)),
+    );
+  }
+  aside.append(
+    element("h3", "character-info__heading", "先天禀赋"),
+    aptitudeList,
+    element("h3", "character-info__heading", "已选词条"),
+  );
+  const traits = element("ul", "character-info__traits");
+  for (const trait of state.game.player.traits) {
+    traits.append(element("li", "", trait.name));
+  }
+  aside.append(traits);
+  return aside;
 }
 
 function renderGameNavigation(
@@ -249,7 +308,16 @@ function renderGameNavigation(
   cultivation.addEventListener("click", () => {
     game.showCultivation();
   });
-  navigation.append(overview, cultivation);
+  const items = button(
+    "物品",
+    `game-nav__item${state.page === "items" ? " game-nav__item--active" : ""}`,
+  );
+  items.setAttribute("aria-current", state.page === "items" ? "page" : "false");
+  items.disabled = state.busy;
+  items.addEventListener("click", () => {
+    game.showItems();
+  });
+  navigation.append(overview, cultivation, items);
   return navigation;
 }
 
@@ -416,6 +484,97 @@ function renderCultivation(
     ),
   );
   return content;
+}
+
+function renderItems(
+  state: OverviewState,
+  game: GameController,
+): DocumentFragment {
+  const content = document.createDocumentFragment();
+  const storage = state.game.storage;
+  content.append(
+    element("h2", "section-title", "物品"),
+    element(
+      "p",
+      "storage-capacity",
+      `背包已使用 ${String(storage.backpack_used_slots)} / ${String(storage.backpack_capacity)} 个槽位`,
+    ),
+    element("h3", "subheading", "背包"),
+    renderItemCollection(storage.backpack, "store", state, game),
+    element("h3", "subheading", "仓库"),
+    renderItemCollection(storage.warehouse, "retrieve", state, game),
+    element(
+      "p",
+      "notice notice--subtle",
+      "当前 pre-alpha 物品仅支持在背包与仓库间转移，尚不能使用、装备或丢弃。",
+    ),
+  );
+  return content;
+}
+
+function renderItemCollection(
+  items: readonly ItemStackView[],
+  action: "store" | "retrieve",
+  state: OverviewState,
+  game: GameController,
+): HTMLElement {
+  const collection = element("div", "item-grid");
+  if (items.length === 0) {
+    collection.append(
+      element(
+        "p",
+        "storage-empty",
+        action === "store" ? "背包为空。" : "仓库为空。",
+      ),
+    );
+    return collection;
+  }
+  for (const item of items) {
+    const card = element("article", "item-card");
+    const header = element("div", "item-card__header");
+    header.append(
+      element("strong", "item-card__name", item.name),
+      element("span", "item-card__quantity", `× ${String(item.quantity)}`),
+    );
+    const category = element("span", "item-card__category", item.category);
+    const description = element(
+      "p",
+      "item-card__description",
+      item.description,
+    );
+    const form = element("form", "item-transfer");
+    const inputId = `${action}-${item.item_id}`;
+    const label = element("label", "field__label", "数量");
+    label.htmlFor = inputId;
+    const input = document.createElement("input");
+    input.id = inputId;
+    input.className = "input input--number";
+    input.type = "number";
+    input.min = "1";
+    input.max = String(item.quantity);
+    input.step = "1";
+    input.value = "1";
+    input.disabled = state.busy;
+    const submit = button(
+      action === "store" ? "存入仓库" : "取回背包",
+      "button button--secondary",
+    );
+    submit.type = "submit";
+    submit.disabled = state.busy;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const quantity = Number(input.value);
+      if (action === "store") {
+        void game.storeItem(item.item_id, quantity);
+      } else {
+        void game.retrieveItem(item.item_id, quantity);
+      }
+    });
+    form.append(label, input, submit);
+    card.append(header, category, description, form);
+    collection.append(card);
+  }
+  return collection;
 }
 
 function renderError(message: string): HTMLElement {

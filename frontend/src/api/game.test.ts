@@ -33,6 +33,28 @@ const STATE_PAYLOAD = {
     wheel_status: "seeking",
     suspected_sighting_threshold: 100,
   },
+  storage: {
+    backpack_capacity: 12,
+    backpack_used_slots: 1,
+    backpack: [
+      {
+        item_id: "spirit_stone.low",
+        name: "下品灵石",
+        description: "测试说明。",
+        category: "灵石",
+        quantity: 13,
+      },
+    ],
+    warehouse: [
+      {
+        item_id: "spirit_stone.low",
+        name: "下品灵石",
+        description: "测试说明。",
+        category: "灵石",
+        quantity: 7,
+      },
+    ],
+  },
 };
 
 function jsonResponse(payload: object, status = 200): Response {
@@ -142,6 +164,34 @@ describe("HttpGameApi", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/game/cultivation/seek-wheel", {
       method: "POST",
       body: JSON.stringify({ max_days: 7, expected_revision: 0 }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+  });
+
+  it("submits an item transfer and parses authoritative storage", async () => {
+    const fetcher = vi.fn((): Promise<Response> =>
+      Promise.resolve(jsonResponse({ state: STATE_PAYLOAD })),
+    );
+    const api = new HttpGameApi(fetcher);
+
+    const state = await api.storeItem({
+      item_id: "spirit_stone.low",
+      quantity: 10,
+      expected_revision: 0,
+    });
+
+    expect(state.storage.backpack[0]?.quantity).toBe(13);
+    expect(state.storage.warehouse[0]?.quantity).toBe(7);
+    expect(fetcher).toHaveBeenCalledWith("/api/game/items/store", {
+      method: "POST",
+      body: JSON.stringify({
+        item_id: "spirit_stone.low",
+        quantity: 10,
+        expected_revision: 0,
+      }),
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",

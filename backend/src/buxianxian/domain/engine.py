@@ -1,5 +1,7 @@
 """Pure deterministic command dispatch and atomic state-transition handlers."""
 
+from collections.abc import Iterable
+from dataclasses import replace
 from typing import assert_never
 
 from buxianxian.domain.cultivation import (
@@ -24,10 +26,28 @@ from buxianxian.domain.model import (
     TransitionResult,
 )
 from buxianxian.domain.random_source import RandomSource
+from buxianxian.domain.storage import (
+    BACKPACK_CAPACITY,
+    MAX_ITEM_STACK_QUANTITY,
+    PROTOTYPE_ITEM_IDS,
+    ItemTransferred,
+    RetrieveItem,
+    StorageLocation,
+    StorageState,
+    StoreItem,
+    quantity_of,
+    with_quantity,
+)
 
 
 class DomainEngine:
     """Dispatch typed commands without owning state or external resources."""
+
+    def __init__(self, known_item_ids: Iterable[str] = PROTOTYPE_ITEM_IDS) -> None:
+        item_ids = tuple(known_item_ids)
+        if not item_ids or len(set(item_ids)) != len(item_ids):
+            raise ValueError("known item IDs must be non-empty and unique")
+        self._known_item_ids = frozenset(item_ids)
 
     def transition(
         self,
@@ -42,8 +62,38 @@ class DomainEngine:
                 return _handle_advance_time(state, command)
             case SeekWheel():
                 return _handle_seek_wheel(state, command, random_source)
+            case StoreItem():
+                return self._handle_store_item(state, command)
+            case RetrieveItem():
+                return self._handle_retrieve_item(state, command)
 
         assert_never(command)
+
+    def _handle_store_item(
+        self,
+        state: GameState,
+        command: StoreItem,
+    ) -> TransitionResult:
+        return _handle_item_transfer(
+            state=state,
+            item_id=command.item_id,
+            quantity=command.quantity,
+            source=StorageLocation.BACKPACK,
+            known_item_ids=self._known_item_ids,
+        )
+
+    def _handle_retrieve_item(
+        self,
+        state: GameState,
+        command: RetrieveItem,
+    ) -> TransitionResult:
+        return _handle_item_transfer(
+            state=state,
+            item_id=command.item_id,
+            quantity=command.quantity,
+            source=StorageLocation.WAREHOUSE,
+            known_item_ids=self._known_item_ids,
+        )
 
 
 def _handle_advance_time(state: GameState, command: AdvanceTime) -> TransitionResult:
@@ -55,11 +105,10 @@ def _handle_advance_time(state: GameState, command: AdvanceTime) -> TransitionRe
         return Rejected(state=state, reason=RejectionReason.DAY_COUNT_OUT_OF_RANGE)
 
     current_elapsed_days = state.elapsed_days + command.days
-    new_state = GameState(
+    new_state = replace(
+        state,
         revision=state.revision + 1,
         elapsed_days=current_elapsed_days,
-        player=state.player,
-        cultivation=state.cultivation,
     )
     return Accepted(
         state=new_state,
@@ -123,10 +172,10 @@ def _handle_seek_wheel(
 
     reached_suspected_sighting = insight == WHEEL_SUSPECTED_SIGHTING_THRESHOLD
     current_elapsed_days = state.elapsed_days + actual_days
-    new_state = GameState(
+    new_state = replace(
+        state,
         revision=state.revision + 1,
         elapsed_days=current_elapsed_days,
-        player=state.player,
         cultivation=CultivationState(
             stage=state.cultivation.stage,
             wheel_insight=insight,
@@ -150,6 +199,67 @@ def _handle_seek_wheel(
                 reached_suspected_sighting=reached_suspected_sighting,
                 previous_elapsed_days=state.elapsed_days,
                 current_elapsed_days=current_elapsed_days,
+            ),
+        ),
+    )
+
+
+def _handle_item_transfer(
+    *,
+    state: GameState,
+    item_id: str,
+    quantity: int,
+    source: StorageLocation,
+    known_item_ids: frozenset[str],
+) -> TransitionResult:
+    if type(quantity) is not int or quantity <= 0:
+        return Rejected(state=state, reason=RejectionReason.INVALID_ITEM_QUANTITY)
+    if quantity > MAX_ITEM_STACK_QUANTITY:
+        return Rejected(state=state, reason=RejectionReason.ITEM_QUANTITY_OUT_OF_RANGE)
+    if type(item_id) is not str or item_id not in known_item_ids:
+        return Rejected(state=state, reason=RejectionReason.UNKNOWN_ITEM)
+
+    source_stacks = (
+        state.storage.backpack if source is StorageLocation.BACKPACK else state.storage.warehouse
+    )
+    target_stacks = (
+        state.storage.warehouse if source is StorageLocation.BACKPACK else state.storage.backpack
+    )
+    source_quantity = quantity_of(source_stacks, item_id)
+    if source_quantity < quantity:
+        return Rejected(state=state, reason=RejectionReason.SOURCE_ITEM_INSUFFICIENT)
+
+    target_quantity = quantity_of(target_stacks, item_id)
+    if target_quantity > MAX_ITEM_STACK_QUANTITY - quantity:
+        return Rejected(state=state, reason=RejectionReason.ITEM_QUANTITY_OUT_OF_RANGE)
+    if (
+        source is StorageLocation.WAREHOUSE
+        and target_quantity == 0
+        and len(target_stacks) >= BACKPACK_CAPACITY
+    ):
+        return Rejected(state=state, reason=RejectionReason.BACKPACK_CAPACITY_EXCEEDED)
+
+    source_quantity_after = source_quantity - quantity
+    target_quantity_after = target_quantity + quantity
+    updated_source = with_quantity(source_stacks, item_id, source_quantity_after)
+    updated_target = with_quantity(target_stacks, item_id, target_quantity_after)
+    if source is StorageLocation.BACKPACK:
+        storage = StorageState(backpack=updated_source, warehouse=updated_target)
+        target = StorageLocation.WAREHOUSE
+    else:
+        storage = StorageState(backpack=updated_target, warehouse=updated_source)
+        target = StorageLocation.BACKPACK
+
+    return Accepted(
+        state=replace(state, revision=state.revision + 1, storage=storage),
+        events=(
+            ItemTransferred(
+                item_id=item_id,
+                quantity=quantity,
+                source=source,
+                target=target,
+                source_quantity_after=source_quantity_after,
+                target_quantity_after=target_quantity_after,
             ),
         ),
     )

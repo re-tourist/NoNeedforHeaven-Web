@@ -14,9 +14,18 @@ import {
   type GameApi,
   type GameStateView,
   type GameStatus,
+  type ItemTransferInput,
   type SeekWheelInput,
   type WaitInput,
 } from "./api/game";
+
+const INITIAL_SPIRIT_STONE = {
+  item_id: "spirit_stone.low",
+  name: "下品灵石",
+  description: "测试说明。",
+  category: "灵石",
+  quantity: 20,
+};
 
 const INITIAL_GAME: GameStateView = {
   revision: 0,
@@ -49,6 +58,12 @@ const INITIAL_GAME: GameStateView = {
     wheel_status: "seeking",
     suspected_sighting_threshold: 100,
   },
+  storage: {
+    backpack_capacity: 12,
+    backpack_used_slots: 1,
+    backpack: [INITIAL_SPIRIT_STONE],
+    warehouse: [],
+  },
 };
 
 const WAITED_GAME: GameStateView = {
@@ -64,6 +79,26 @@ const CULTIVATED_GAME: GameStateView = {
   cultivation: {
     ...INITIAL_GAME.cultivation,
     wheel_insight: 34,
+  },
+};
+
+const STORED_GAME: GameStateView = {
+  ...INITIAL_GAME,
+  revision: 1,
+  storage: {
+    ...INITIAL_GAME.storage,
+    backpack: [
+      {
+        ...INITIAL_SPIRIT_STONE,
+        quantity: 10,
+      },
+    ],
+    warehouse: [
+      {
+        ...INITIAL_SPIRIT_STONE,
+        quantity: 10,
+      },
+    ],
   },
 };
 
@@ -119,20 +154,29 @@ class FakeGameApi implements GameApi {
   loadResult: GameStateView = INITIAL_GAME;
   waitResult: GameStateView = WAITED_GAME;
   seekResult: CultivationResponse = CULTIVATION_RESPONSE;
+  storeResult: GameStateView = STORED_GAME;
+  retrieveResult: GameStateView = INITIAL_GAME;
   statusError: Error | null = null;
   draftError: Error | null = null;
   confirmError: Error | null = null;
   loadError: Error | null = null;
   waitError: Error | null = null;
   seekError: Error | null = null;
+  storeError: Error | null = null;
+  retrieveError: Error | null = null;
   confirmPromise: Promise<GameStateView> | null = null;
   seekPromise: Promise<CultivationResponse> | null = null;
+  storePromise: Promise<GameStateView> | null = null;
   confirmCalls = 0;
   waitCalls = 0;
   seekCalls = 0;
+  storeCalls = 0;
+  retrieveCalls = 0;
   lastConfirmation: ConfirmNewGameInput | null = null;
   lastWait: WaitInput | null = null;
   lastSeek: SeekWheelInput | null = null;
+  lastStore: ItemTransferInput | null = null;
+  lastRetrieve: ItemTransferInput | null = null;
 
   getStatus(): Promise<GameStatus> {
     if (this.statusError !== null) {
@@ -184,6 +228,24 @@ class FakeGameApi implements GameApi {
       throw this.seekError;
     }
     return this.seekPromise ?? this.seekResult;
+  }
+
+  async storeItem(input: ItemTransferInput): Promise<GameStateView> {
+    this.storeCalls += 1;
+    this.lastStore = input;
+    if (this.storeError !== null) {
+      throw this.storeError;
+    }
+    return this.storePromise ?? this.storeResult;
+  }
+
+  retrieveItem(input: ItemTransferInput): Promise<GameStateView> {
+    this.retrieveCalls += 1;
+    this.lastRetrieve = input;
+    if (this.retrieveError !== null) {
+      return Promise.reject(this.retrieveError);
+    }
+    return Promise.resolve(this.retrieveResult);
   }
 }
 
@@ -551,5 +613,74 @@ describe("GameController", () => {
     await controller.initialize();
 
     expect(controller.canSeekWheel()).toBe(false);
+  });
+
+  it("switches to items and adopts only the server transfer result", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    const controller = new GameController(api);
+    await controller.initialize();
+    controller.showItems();
+
+    await controller.storeItem("spirit_stone.low", 10);
+
+    const state = overviewState(controller);
+    expect(state.page).toBe("items");
+    expect(state.game).toEqual(STORED_GAME);
+    expect(api.lastStore).toEqual({
+      item_id: "spirit_stone.low",
+      quantity: 10,
+      expected_revision: 0,
+    });
+  });
+
+  it("prevents duplicate item transfer while the request is pending", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    const pending = new Deferred<GameStateView>();
+    api.storePromise = pending.promise;
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    const first = controller.storeItem("spirit_stone.low", 10);
+    const second = controller.storeItem("spirit_stone.low", 10);
+
+    expect(api.storeCalls).toBe(1);
+    expect(overviewState(controller).busy).toBe(true);
+    pending.resolve(STORED_GAME);
+    await Promise.all([first, second]);
+    expect(overviewState(controller).busy).toBe(false);
+  });
+
+  it("refreshes authoritative item state after a revision conflict", async () => {
+    const api = new FakeGameApi();
+    api.status = {
+      ...api.status,
+      session_active: true,
+      state: INITIAL_GAME,
+    };
+    api.retrieveError = new ApiClientError(
+      "revision_conflict",
+      "状态已刷新。",
+      STORED_GAME,
+    );
+    const controller = new GameController(api);
+    await controller.initialize();
+
+    await controller.retrieveItem("spirit_stone.low", 3);
+
+    const state = overviewState(controller);
+    expect(state.page).toBe("items");
+    expect(state.game).toEqual(STORED_GAME);
+    expect(state.error).toBe("状态已刷新。");
+    expect(api.retrieveCalls).toBe(1);
   });
 });

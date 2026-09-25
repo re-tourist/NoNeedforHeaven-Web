@@ -26,6 +26,7 @@ class ApiErrorCode(StrEnum):
     REVISION_CONFLICT = "revision_conflict"
     TIME_COMMAND_REJECTED = "time_command_rejected"
     CULTIVATION_COMMAND_REJECTED = "cultivation_command_rejected"
+    ITEM_COMMAND_REJECTED = "item_command_rejected"
     PERSISTENCE_FAILED = "persistence_failed"
 
 
@@ -91,6 +92,29 @@ class CultivationStateResponse(BaseModel):
     suspected_sighting_threshold: int
 
 
+class ItemResponse(BaseModel):
+    """One authoritative stack enriched with static display metadata."""
+
+    model_config = STRICT_MODEL
+
+    item_id: str
+    name: str
+    description: str
+    category: str
+    quantity: int
+
+
+class StorageStateResponse(BaseModel):
+    """Browser-facing backpack and warehouse projection."""
+
+    model_config = STRICT_MODEL
+
+    backpack_capacity: int
+    backpack_used_slots: int
+    backpack: tuple[ItemResponse, ...]
+    warehouse: tuple[ItemResponse, ...]
+
+
 class GameStateResponse(BaseModel):
     """Browser-facing authoritative state without persistence or RNG details."""
 
@@ -100,6 +124,7 @@ class GameStateResponse(BaseModel):
     elapsed_days: int
     player: PlayerResponse
     cultivation: CultivationStateResponse
+    storage: StorageStateResponse
 
 
 class GameStatusResponse(BaseModel):
@@ -161,6 +186,16 @@ class SeekWheelRequest(BaseModel):
     model_config = STRICT_MODEL
 
     max_days: int
+    expected_revision: int
+
+
+class ItemTransferRequest(BaseModel):
+    """Typed storage intent against an expected authoritative revision."""
+
+    model_config = STRICT_MODEL
+
+    item_id: str = Field(min_length=1)
+    quantity: int
     expected_revision: int
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from buxianxian.application import SingleGameRuntime
 from buxianxian.infrastructure import (
+    PROTOTYPE_ITEM_CATALOG,
     PROTOTYPE_TRAIT_CATALOG,
     JsonFileSaveRepository,
     SecureDraftIdentifierSource,
@@ -34,6 +35,7 @@ def create_default_runtime(save_path: Path | None = None) -> ConcreteGameRuntime
     return SingleGameRuntime[XorShift64StarRandom](
         repository=repository,
         trait_catalog=PROTOTYPE_TRAIT_CATALOG,
+        item_catalog=PROTOTYPE_ITEM_CATALOG,
         random_source_factory=SecureXorShift64StarFactory(),
         draft_identifier_source=SecureDraftIdentifierSource(),
     )

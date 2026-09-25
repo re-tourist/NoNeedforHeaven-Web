@@ -15,6 +15,7 @@ from buxianxian.domain.model import (
     normalize_character_name,
 )
 from buxianxian.domain.random_source import RandomSource
+from buxianxian.domain.storage import StorageState
 
 APTITUDE_OPTION_COUNT = 3
 TRAIT_OPTION_COUNT = 6
@@ -181,6 +182,7 @@ def confirm_character_creation(
             elapsed_days=0,
             player=player,
             cultivation=CultivationState.initial(),
+            storage=StorageState.initial(),
         )
     )
 

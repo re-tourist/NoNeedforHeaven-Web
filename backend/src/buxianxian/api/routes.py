@@ -17,9 +17,12 @@ from buxianxian.api.contracts import (
     CultivationStateResponse,
     GameStateResponse,
     GameStatusResponse,
+    ItemResponse,
+    ItemTransferRequest,
     PlayerResponse,
     SeekWheelRequest,
     StateEnvelope,
+    StorageStateResponse,
     TraitResponse,
     WaitRequest,
 )
@@ -36,14 +39,18 @@ from buxianxian.application import (
     PersistenceError,
     PersistenceFailed,
     RevisionConflict,
+    RuntimeCommandResult,
     SaveInspectionFailed,
     SaveOverwriteRequired,
 )
 from buxianxian.domain import (
+    BACKPACK_CAPACITY,
     WHEEL_SUSPECTED_SIGHTING_THRESHOLD,
     CharacterCreationErrorCode,
     GameState,
     InnateAptitudes,
+    ItemDefinition,
+    ItemStack,
     RejectionReason,
     TraitDefinition,
     WheelSeekingCompleted,
@@ -63,7 +70,11 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
             save_available=current.save_available,
             session_active=current.session_active,
             state=(
-                _state_response(current.state, runtime.trait_catalog)
+                _state_response(
+                    current.state,
+                    runtime.trait_catalog,
+                    runtime.item_catalog,
+                )
                 if current.state is not None
                 else None
             ),
@@ -111,14 +122,26 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
         if isinstance(result, NewGameRejected):
             code, message = _character_error(result.error)
             return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, code, message)
-        return StateEnvelope(state=_state_response(result.session.state, runtime.trait_catalog))
+        return StateEnvelope(
+            state=_state_response(
+                result.session.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            )
+        )
 
     def load_game() -> StateEnvelope | JSONResponse:
         result = runtime.load_game()
         if isinstance(result, GameLoadFailed):
             detail = _load_error_detail(result.error)
             return _error_response(_load_error_status(detail.code), detail.code, detail.message)
-        return StateEnvelope(state=_state_response(result.state, runtime.trait_catalog))
+        return StateEnvelope(
+            state=_state_response(
+                result.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            )
+        )
 
     def wait(request: WaitRequest) -> StateEnvelope | JSONResponse:
         result = runtime.wait(request.days, request.expected_revision)
@@ -140,16 +163,30 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 ApiErrorCode.TIME_COMMAND_REJECTED,
                 _time_rejection_message(result.reason),
-                state=_state_response(result.state, runtime.trait_catalog),
+                state=_state_response(
+                    result.state,
+                    runtime.trait_catalog,
+                    runtime.item_catalog,
+                ),
             )
         if isinstance(result, PersistenceFailed):
             return _error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 ApiErrorCode.PERSISTENCE_FAILED,
                 "游戏状态无法安全保存。本次等待没有生效。",
-                state=_state_response(result.state, runtime.trait_catalog),
+                state=_state_response(
+                    result.state,
+                    runtime.trait_catalog,
+                    runtime.item_catalog,
+                ),
             )
-        return StateEnvelope(state=_state_response(result.state, runtime.trait_catalog))
+        return StateEnvelope(
+            state=_state_response(
+                result.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            )
+        )
 
     def seek_wheel(request: SeekWheelRequest) -> CultivationEnvelope | JSONResponse:
         result = runtime.seek_wheel(request.max_days, request.expected_revision)
@@ -171,18 +208,50 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 ApiErrorCode.CULTIVATION_COMMAND_REJECTED,
                 _cultivation_rejection_message(result.reason),
-                state=_state_response(result.state, runtime.trait_catalog),
+                state=_state_response(
+                    result.state,
+                    runtime.trait_catalog,
+                    runtime.item_catalog,
+                ),
             )
         if isinstance(result, PersistenceFailed):
             return _error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 ApiErrorCode.PERSISTENCE_FAILED,
                 "游戏状态无法安全保存。本次寻轮没有生效。",
-                state=_state_response(result.state, runtime.trait_catalog),
+                state=_state_response(
+                    result.state,
+                    runtime.trait_catalog,
+                    runtime.item_catalog,
+                ),
             )
         return CultivationEnvelope(
-            state=_state_response(result.state, runtime.trait_catalog),
+            state=_state_response(
+                result.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            ),
             cultivation_result=_cultivation_result_response(result),
+        )
+
+    def store_item(request: ItemTransferRequest) -> StateEnvelope | JSONResponse:
+        return _item_transfer_response(
+            runtime,
+            runtime.store_item(
+                request.item_id,
+                request.quantity,
+                request.expected_revision,
+            ),
+        )
+
+    def retrieve_item(request: ItemTransferRequest) -> StateEnvelope | JSONResponse:
+        return _item_transfer_response(
+            runtime,
+            runtime.retrieve_item(
+                request.item_id,
+                request.quantity,
+                request.expected_revision,
+            ),
         )
 
     router.add_api_route(
@@ -245,6 +314,28 @@ def create_game_router(runtime: ConcreteGameRuntime) -> APIRouter:
             503: {"model": ApiErrorResponse},
         },
     )
+    router.add_api_route(
+        "/items/store",
+        store_item,
+        methods=["POST"],
+        response_model=StateEnvelope,
+        responses={
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+            503: {"model": ApiErrorResponse},
+        },
+    )
+    router.add_api_route(
+        "/items/retrieve",
+        retrieve_item,
+        methods=["POST"],
+        response_model=StateEnvelope,
+        responses={
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+            503: {"model": ApiErrorResponse},
+        },
+    )
 
     return router
 
@@ -267,6 +358,7 @@ def _draft_response(result: DraftCreated) -> CharacterDraftResponse:
 def _state_response(
     state: GameState,
     trait_catalog: tuple[TraitDefinition, ...],
+    item_catalog: tuple[ItemDefinition, ...],
 ) -> GameStateResponse:
     trait_by_id = {trait.trait_id: trait for trait in trait_catalog}
     traits = tuple(
@@ -293,6 +385,12 @@ def _state_response(
             wheel_status=state.cultivation.wheel_status.value,
             suspected_sighting_threshold=WHEEL_SUSPECTED_SIGHTING_THRESHOLD,
         ),
+        storage=StorageStateResponse(
+            backpack_capacity=BACKPACK_CAPACITY,
+            backpack_used_slots=len(state.storage.backpack),
+            backpack=_item_responses(state.storage.backpack, item_catalog),
+            warehouse=_item_responses(state.storage.warehouse, item_catalog),
+        ),
     )
 
 
@@ -311,6 +409,35 @@ def _trait_response(trait: TraitDefinition) -> TraitResponse:
         trait_id=trait.trait_id,
         name=trait.name,
         description=trait.description,
+    )
+
+
+def _item_responses(
+    stacks: tuple[ItemStack, ...],
+    item_catalog: tuple[ItemDefinition, ...],
+) -> tuple[ItemResponse, ...]:
+    item_by_id = {item.item_id: item for item in item_catalog}
+    return tuple(_item_response(stack, item_by_id.get(stack.item_id)) for stack in stacks)
+
+
+def _item_response(
+    stack: ItemStack,
+    definition: ItemDefinition | None,
+) -> ItemResponse:
+    if definition is None:
+        return ItemResponse(
+            item_id=stack.item_id,
+            name="未知原型物品",
+            description="当前原型目录中没有此物品的显示信息。",
+            category="未知",
+            quantity=stack.quantity,
+        )
+    return ItemResponse(
+        item_id=stack.item_id,
+        name=definition.name,
+        description=definition.description,
+        category=definition.category,
+        quantity=stack.quantity,
     )
 
 
@@ -405,11 +532,77 @@ def _cultivation_result_response(
     )
 
 
+def _item_transfer_response(
+    runtime: ConcreteGameRuntime,
+    result: RuntimeCommandResult,
+) -> StateEnvelope | JSONResponse:
+    if isinstance(result, NoActiveSession):
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            ApiErrorCode.NO_ACTIVE_SESSION,
+            "当前没有活动游戏。请先开始或继续游戏。",
+        )
+    if isinstance(result, RevisionConflict):
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            ApiErrorCode.REVISION_CONFLICT,
+            "游戏状态已经更新。界面已刷新。请重新确认物品操作。",
+            state=_active_state(runtime),
+        )
+    if isinstance(result, CommandRejected):
+        return _error_response(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            ApiErrorCode.ITEM_COMMAND_REJECTED,
+            _item_rejection_message(result.reason),
+            state=_state_response(
+                result.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            ),
+        )
+    if isinstance(result, PersistenceFailed):
+        return _error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            ApiErrorCode.PERSISTENCE_FAILED,
+            "游戏状态无法安全保存。本次物品转移没有生效。",
+            state=_state_response(
+                result.state,
+                runtime.trait_catalog,
+                runtime.item_catalog,
+            ),
+        )
+    return StateEnvelope(
+        state=_state_response(
+            result.state,
+            runtime.trait_catalog,
+            runtime.item_catalog,
+        )
+    )
+
+
+def _item_rejection_message(reason: RejectionReason) -> str:
+    if reason is RejectionReason.INVALID_ITEM_QUANTITY:
+        return "物品数量必须是正整数。"
+    if reason is RejectionReason.ITEM_QUANTITY_OUT_OF_RANGE:
+        return "物品数量超出当前版本支持的安全范围。"
+    if reason is RejectionReason.UNKNOWN_ITEM:
+        return "该物品不属于当前可用目录。"
+    if reason is RejectionReason.SOURCE_ITEM_INSUFFICIENT:
+        return "来源容器中的物品数量不足。"
+    if reason is RejectionReason.BACKPACK_CAPACITY_EXCEEDED:
+        return "背包已达到 12 种不同物品的容量上限。"
+    raise RuntimeError("unexpected item rejection reason")
+
+
 def _active_state(runtime: ConcreteGameRuntime) -> GameStateResponse | None:
     session = runtime.active_session
     if session is None:
         return None
-    return _state_response(session.state, runtime.trait_catalog)
+    return _state_response(
+        session.state,
+        runtime.trait_catalog,
+        runtime.item_catalog,
+    )
 
 
 def _error_response(

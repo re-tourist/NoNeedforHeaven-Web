@@ -84,6 +84,10 @@ input:focus-visible {
   width: min(62rem, 100%);
 }
 
+.game-panel {
+  width: min(76rem, 100%);
+}
+
 .panel--center {
   text-align: center;
 }
@@ -105,6 +109,117 @@ input:focus-visible {
   margin: -0.45rem 0 1.5rem;
   padding-bottom: 0.8rem;
   border-bottom: 1px solid #ddd2c2;
+}
+
+.game-statusbar {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(3, 1fr);
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  padding: 0.65rem;
+  border: 1px solid #d9cbb8;
+  border-radius: 0.75rem;
+  background: #f5eee3;
+}
+
+.status-chip {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-left: 2px solid #b18a5a;
+}
+
+.status-chip__label {
+  color: #806d58;
+  font-size: 0.76rem;
+}
+
+.status-chip__value {
+  overflow: hidden;
+  color: #493523;
+  font-size: 0.95rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13.5rem;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.game-main {
+  min-width: 0;
+}
+
+.character-info {
+  position: sticky;
+  top: 1rem;
+  padding: 1rem;
+  border: 1px solid #d5c5b1;
+  border-radius: 0.75rem;
+  background: #fbf7f0;
+}
+
+.character-info__eyebrow {
+  margin: 0;
+  color: #8a6a45;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.character-info__name {
+  margin: 0.35rem 0 0;
+  color: #403227;
+  font-family: "Noto Serif SC", STSong, serif;
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.character-info__meta {
+  margin: 0.35rem 0 1.1rem;
+  color: #776957;
+  font-size: 0.82rem;
+}
+
+.character-info__heading {
+  margin: 1rem 0 0.55rem;
+  color: #5f4933;
+  font-size: 0.86rem;
+}
+
+.character-info__aptitudes {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.5rem;
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.character-info__aptitudes dt,
+.character-info__aptitudes dd {
+  margin: 0;
+}
+
+.character-info__aptitudes dt {
+  color: #766552;
+}
+
+.character-info__aptitudes dd {
+  color: #493523;
+  font-weight: 800;
+}
+
+.character-info__traits {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #6d5a45;
+  font-size: 0.86rem;
 }
 
 .game-nav__item {
@@ -389,6 +504,83 @@ input:focus-visible {
   margin-top: 1rem;
 }
 
+.storage-capacity {
+  margin: -0.55rem 0 1rem;
+  color: #68533d;
+  font-weight: 700;
+}
+
+.item-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.item-card {
+  padding: 1rem;
+  border: 1px solid #d1c3b0;
+  border-radius: 0.7rem;
+  background: #fffdfa;
+}
+
+.item-card__header {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.item-card__name {
+  color: #403227;
+  font-family: "Noto Serif SC", STSong, serif;
+}
+
+.item-card__quantity {
+  color: #76502d;
+  font-weight: 800;
+}
+
+.item-card__category {
+  display: inline-block;
+  margin-top: 0.45rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  color: #695642;
+  background: #f0e7da;
+  font-size: 0.78rem;
+}
+
+.item-card__description {
+  min-height: 3rem;
+  color: #6d6155;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.item-transfer {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.item-transfer .field__label {
+  grid-column: 1 / -1;
+}
+
+.item-transfer .input--number {
+  width: 100%;
+}
+
+.storage-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed #c9bba8;
+  border-radius: 0.65rem;
+  color: #786955;
+  text-align: center;
+}
+
 .error,
 .notice,
 .loading {
@@ -420,8 +612,21 @@ input:focus-visible {
 
   .choice-grid--aptitudes,
   .choice-grid--traits,
-  .summary-grid {
+  .summary-grid,
+  .item-grid {
     grid-template-columns: 1fr;
+  }
+
+  .game-statusbar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .game-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .character-info {
+    position: static;
   }
 
   .aptitudes {
@@ -431,5 +636,15 @@ input:focus-visible {
 
   .actions .button {
     flex: 1 1 12rem;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 980px) {
+  .game-layout {
+    grid-template-columns: minmax(0, 1fr) 11rem;
+  }
+
+  .game-statusbar {
+    grid-template-columns: repeat(4, 1fr);
   }
 }

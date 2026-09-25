@@ -18,6 +18,7 @@ from buxianxian.api.contracts import (
 from buxianxian.application import PersistenceError, SingleGameRuntime
 from buxianxian.domain import GameState, InnateAptitudes, PlayerCharacter
 from buxianxian.infrastructure import (
+    PROTOTYPE_ITEM_CATALOG,
     PROTOTYPE_TRAIT_CATALOG,
     JsonFileSaveRepository,
     LoadedSave,
@@ -70,6 +71,7 @@ def _runtime(
     return SingleGameRuntime[XorShift64StarRandom](
         repository=repository,
         trait_catalog=PROTOTYPE_TRAIT_CATALOG,
+        item_catalog=PROTOTYPE_ITEM_CATALOG,
         random_source_factory=FixedRandomFactory(seed),
         draft_identifier_source=FixedDraftIds(),
     )
@@ -206,6 +208,15 @@ def test_valid_draft_creates_persists_and_projects_complete_new_game(tmp_path: P
     assert created.state.elapsed_days == 0
     assert created.state.player.name == "网页角色"
     assert len(created.state.player.traits) == 2
+    assert created.state.storage.backpack_capacity == 12
+    assert created.state.storage.backpack_used_slots == 4
+    assert {item.item_id: item.quantity for item in created.state.storage.backpack} == {
+        "document.tattered_scroll": 1,
+        "material.common_herb": 3,
+        "provision.dry_food": 5,
+        "spirit_stone.low": 20,
+    }
+    assert created.state.storage.warehouse == ()
     assert runtime.active_session is not None
     assert repository.load().state == runtime.active_session.state
 
@@ -496,3 +507,124 @@ def test_restart_load_restores_cultivation_and_can_continue_rng_sequence(
     assert continued.state.revision == first_result.state.revision + 1
     assert continued.state.elapsed_days > first_result.state.elapsed_days
     assert continued.state.cultivation.wheel_insight > first_result.state.cultivation.wheel_insight
+
+
+def test_item_transfer_conserves_quantity_handles_conflict_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    client, runtime = _client(repository, seed=727)
+    draft = _create_draft(client)
+    client.post("/api/game/new", json=_confirmation_payload(draft))
+    assert runtime.active_session is not None
+    initial_random = runtime.active_session.fork_random_source().snapshot()
+
+    stored_response = client.post(
+        "/api/game/items/store",
+        json={
+            "item_id": "spirit_stone.low",
+            "quantity": 10,
+            "expected_revision": 0,
+        },
+    )
+    stored = StateEnvelope.model_validate_json(stored_response.text)
+    assert stored_response.status_code == 200
+    assert stored.state.revision == 1
+    assert stored.state.elapsed_days == 0
+    assert {item.item_id: item.quantity for item in stored.state.storage.backpack}[
+        "spirit_stone.low"
+    ] == 10
+    assert {item.item_id: item.quantity for item in stored.state.storage.warehouse}[
+        "spirit_stone.low"
+    ] == 10
+
+    insufficient = client.post(
+        "/api/game/items/store",
+        json={
+            "item_id": "spirit_stone.low",
+            "quantity": 11,
+            "expected_revision": 1,
+        },
+    )
+    insufficient_error = ApiErrorResponse.model_validate_json(insufficient.text)
+    assert insufficient.status_code == 422
+    assert insufficient_error.error.code is ApiErrorCode.ITEM_COMMAND_REJECTED
+    assert insufficient_error.state == stored.state
+
+    conflict = client.post(
+        "/api/game/items/retrieve",
+        json={
+            "item_id": "spirit_stone.low",
+            "quantity": 3,
+            "expected_revision": 0,
+        },
+    )
+    conflict_error = ApiErrorResponse.model_validate_json(conflict.text)
+    assert conflict.status_code == 409
+    assert conflict_error.error.code is ApiErrorCode.REVISION_CONFLICT
+    assert conflict_error.state == stored.state
+
+    retrieved_response = client.post(
+        "/api/game/items/retrieve",
+        json={
+            "item_id": "spirit_stone.low",
+            "quantity": 3,
+            "expected_revision": 1,
+        },
+    )
+    retrieved = StateEnvelope.model_validate_json(retrieved_response.text)
+    backpack = {item.item_id: item.quantity for item in retrieved.state.storage.backpack}
+    warehouse = {item.item_id: item.quantity for item in retrieved.state.storage.warehouse}
+    assert retrieved.state.revision == 2
+    assert retrieved.state.elapsed_days == 0
+    assert backpack["spirit_stone.low"] == 13
+    assert warehouse["spirit_stone.low"] == 7
+    assert backpack["spirit_stone.low"] + warehouse["spirit_stone.low"] == 20
+    assert runtime.active_session.fork_random_source().snapshot() == initial_random
+
+    restarted_client, restarted_runtime = _client(
+        JsonFileSaveRepository(repository.path),
+        seed=999,
+    )
+    restored = StateEnvelope.model_validate_json(restarted_client.post("/api/game/load").text)
+    assert restored.state == retrieved.state
+    assert restarted_runtime.active_session is not None
+    assert restarted_runtime.active_session.fork_random_source().snapshot() == initial_random
+
+
+def test_item_transfer_save_failure_preserves_state_rng_and_old_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = JsonFileSaveRepository(tmp_path / "save.json")
+    client, runtime = _client(repository, seed=733)
+    draft = _create_draft(client)
+    client.post("/api/game/new", json=_confirmation_payload(draft))
+    assert runtime.active_session is not None
+    before_state = runtime.active_session.state
+    before_random = runtime.active_session.fork_random_source().snapshot()
+
+    def fail_replace(source: Path, target: Path) -> None:
+        del source, target
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr(save_repository_module, "_replace_file", fail_replace)
+    response = client.post(
+        "/api/game/items/store",
+        json={
+            "item_id": "spirit_stone.low",
+            "quantity": 10,
+            "expected_revision": 0,
+        },
+    )
+    error = ApiErrorResponse.model_validate_json(response.text)
+
+    assert response.status_code == 503
+    assert error.error.code is ApiErrorCode.PERSISTENCE_FAILED
+    assert error.state is not None
+    assert error.state.revision == before_state.revision
+    assert runtime.active_session.state == before_state
+    assert runtime.active_session.fork_random_source().snapshot() == before_random
+    loaded = repository.load()
+    assert loaded.state == before_state
+    assert loaded.random_source.snapshot() == before_random

@@ -79,6 +79,24 @@ Revision conflict returns HTTP 409 with current state. Domain rejection (invalid
 suspected sighting) returns HTTP 422. Persistence failure returns HTTP 503 and never reports the
 candidate result as committed.
 
+### `POST /api/game/items/store`
+
+Moves a positive quantity from the backpack to the warehouse.
+
+```json
+{
+  "item_id": "spirit_stone.low",
+  "quantity": 10,
+  "expected_revision": 2
+}
+```
+
+### `POST /api/game/items/retrieve`
+
+Moves a positive quantity from the warehouse to the backpack. Both item routes return the complete
+authoritative state. They do not advance time or consume RNG. The response includes backpack
+capacity/used slots and display metadata for the four pre-alpha prototype items.
+
 ## Error envelope
 
 Expected failures use:
@@ -102,7 +120,8 @@ Current machine codes:
 - `draft_not_found`, `draft_creation_failed`;
 - `invalid_name`, `invalid_aptitude_selection`, `invalid_trait_selection`;
 - `save_overwrite_required`;
-- `revision_conflict`, `time_command_rejected`, `cultivation_command_rejected`;
+- `revision_conflict`, `time_command_rejected`, `cultivation_command_rejected`,
+  `item_command_rejected`;
 - `persistence_failed`.
 
 Responses never contain a local path, RNG state, internal exception type, or traceback.
